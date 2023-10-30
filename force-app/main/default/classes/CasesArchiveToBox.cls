@@ -1,4 +1,4 @@
-public with sharing class CaseArchiveHandler {
+public with sharing class CasesArchiveToBox {
     public static final String ACCOUNTS_FOLDER = '232841054083';
     public static final String CONTACTS_FOLDER = '232841229558';
     // REMOVE TIME ITEMS
@@ -110,113 +110,122 @@ public with sharing class CaseArchiveHandler {
 
     private static void sendToBox(Map<Id, List<List<Object>>> caseToEmailsAndAttachments) {
         for (Id caseId : caseToEmailsAndAttachments.keySet()) {
-            // Access metadata
             List<String> metadata = (List<String>) caseToEmailsAndAttachments.get(caseId)[0];
-            String caseNumber = metadata[0];
-            String subject = metadata[1];
-            String description = metadata[2];
-            String closedDate = metadata[3];
-            String createdDate = metadata[4];
-            String origin = metadata[5];
             String accountId = metadata[6];
-            String accountName = metadata[7];
             String contactId = metadata[8];
-            String contactName = metadata[9];
-            String ownerId = metadata[10];
-            String ownerName = metadata[11];
-
-            // get or create folder(s) - send data
-            String acctFolder = '';
-            String contactFolder = '';
-            String casesFolder = '';
-            String caseIdFolder = '';
-
             if (accountId != null && accountId != '') {
-                acctFolder = getOrCreateFolder(ACCOUNTS_FOLDER, accountId);
-                if (acctFolder != null && acctFolder != '') {
-                    casesFolder = getOrCreateFolder(acctFolder, 'Cases');
-                    if (casesFolder != null && casesFolder != '') {
-                        caseIdFolder = getOrCreateFolder(casesFolder, caseId);
-                        if (caseIdFolder != null && caseIdFolder != '') {
-                            // Access Blob data and Metadata
-                            List<Map<String, Object>> attachments = (List<Map<String, Object>>) caseToEmailsAndAttachments.get(caseId)[2];
-                            for (Map<String, Object> attachment : attachments) {
-                                Blob contentData = (Blob)attachment.get('blob');
-                                String fileName = (String)attachment.get('fileName');
-                                String fileExtension = (String)attachment.get('fileExtension');
-                                
-                                // Create a Map to hold the House Blob and its metadata
-                                Map<String, Object> houseAttachment = new Map<String, Object>{
-                                    'blob' => contentData,
-                                    'fileName' => fileName + '.' + fileExtension
-                                }; 
-                                uploadFileToBox(houseAttachment, caseIdFolder);
-                            }
-
-                            // Access EmailMessages
-                            List<EmailMessage> emailMessages = (List<EmailMessage>) caseToEmailsAndAttachments.get(caseId)[1];
-                            String emailMessagesContent = '';
-
-                            for (EmailMessage e : emailMessages) {
-                                String emailContent = 'Email Id: ' + e.Id + '<br>' + 'Email Subject: ' + e.Subject + '<br>' + 'Email TextBody: ' + e.TextBody + '<br><br>';
-                                emailMessagesContent += emailContent;
-                            }
-                            Blob emailPdfBlob = Blob.toPdf(emailMessagesContent);
-                            String emailPdfFileName = 'Emails.pdf';
-
-                            // Create a Map to hold the PDF Blob and its metadata
-                            Map<String, Object> emailPdfAttachment = new Map<String, Object>{
-                                'blob' => emailPdfBlob,
-                                'fileName' => emailPdfFileName,
-                                'fileType' => 'application/pdf'
-                            };
-
-                            // Upload the email details PDF to Box
-                            uploadFileToBox(emailPdfAttachment, caseIdFolder);
-                            // Create a Map to hold the EmailMessages Blob and its metadata
-                            Map<String, Object> emailMessagesAttachment = new Map<String, Object>{
-                                'blob' => Blob.valueOf(emailMessagesContent),
-                                'fileName' => 'EmailMessages.html'
-                            };
-                            
-                            // Create Case files & upload
-                            String pdfContent = 'Case Number: ' + caseNumber + '<br>' + 'Subject: ' + subject + '<br>' +
-                            'Description: ' + description + '<br>' + 'Closed Date: ' + closedDate + '<br>' +
-                            'Created Date: ' + createdDate + '<br>' + 'Origin: ' + origin + '<br>' +
-                            'Account Id: ' + accountId + '<br>' + 'Account Name: ' + accountName + '<br>' + 
-                            'Contact Id: ' + contactId + '<br>' + 'Contact Name: ' + contactName + '<br>' + 
-                            'Owner Id: ' + ownerId + '<br>' + 'Owner Name: ' + ownerName + '<br>' +
-                            'Number of Emails: ' + emailMessages.size() + '<br>' +
-                            'Number of Attachments: ' + attachments.size() + '<br>' + '...more fields';
-                            Blob pdfBlob = Blob.toPdf(pdfContent);
-                            String pdfFileName = 'Case-details.pdf';
-                            System.debug('PDF CONTENT: ' + pdfContent);
-                            System.debug(EncodingUtil.base64Encode(pdfBlob));
-                            // Create a Map to hold the PDF Blob and its metadata
-                            Map<String, Object> pdfAttachment = new Map<String, Object>{
-                                'blob' => pdfBlob,
-                                'fileName' => pdfFileName,
-                                'fileType' => 'application/pdf'
-                            };
-
-                            // Upload the case details PDF to Box
-                            uploadFileToBox(pdfAttachment, caseIdFolder);
-                        }
-                    }
-                } 
+                createFoldersAndUpload(caseId, caseToEmailsAndAttachments, 'Accounts');
             } else if (contactId != null && contactId != '') {
-                contactFolder = getOrCreateFolder(CONTACTS_FOLDER, contactId);
-                if (contactFolder != null && contactFolder != '') {
-                    casesFolder = getOrCreateFolder(contactFolder, 'Cases');
-                    if (casesFolder != null && casesFolder != '') {
-                        caseIdFolder = getOrCreateFolder(casesFolder, caseId);
-                        if (caseIdFolder != null && caseIdFolder != '') {
-                            // Create Case files & upload
-                        }
-                    }
-                } 
-            } 
+                createFoldersAndUpload(caseId, caseToEmailsAndAttachments, 'Contacts');
+            } else {
+                return;
+            }
         }
+    }
+
+    // create folder structure Accounts or Contacts folder
+    private static void createFoldersAndUpload(String caseId, Map<Id, List<List<Object>>> caseToEmailsAndAttachments, String type) {
+        if (caseId == null || caseId == '' || caseToEmailsAndAttachments == null || type == null || type == '') {
+            return;
+        } 
+        
+        String parent = '';
+        String id = '';
+        List<String> metadata = (List<String>) caseToEmailsAndAttachments.get(caseId)[0];
+        List<EmailMessage> emailMessages = (List<EmailMessage>) caseToEmailsAndAttachments.get(caseId)[1];
+        List<Map<String, Object>> attachments = (List<Map<String, Object>>) caseToEmailsAndAttachments.get(caseId)[2];
+        String caseNumber = metadata[0];
+        String subject = metadata[1];
+        String description = metadata[2];
+        String closedDate = metadata[3];
+        String createdDate = metadata[4];
+        String origin = metadata[5];
+        String accountId = metadata[6];
+        String accountName = metadata[7];
+        String contactId = metadata[8];
+        String contactName = metadata[9];
+        String ownerId = metadata[10];
+        String ownerName = metadata[11];
+        String folder = '';
+        String casesFolder = '';
+        String caseIdFolder = '';
+
+        if (type == 'Accounts') {
+            parent = ACCOUNTS_FOLDER;
+            id = accountId;
+        } else if (type == 'Contacts') {
+            parent = CONTACTS_FOLDER;
+            id = contactId;
+        }
+
+        folder = getOrCreateFolder(parent, id);
+        if (folder != null && folder != '') {
+            casesFolder = getOrCreateFolder(folder, 'Cases');
+            if (casesFolder != null && casesFolder != '') {
+                caseIdFolder = getOrCreateFolder(casesFolder, caseId);
+                if (caseIdFolder != null && caseIdFolder != '') {
+                    // Access Blob data and Metadata
+                    for (Map<String, Object> attachment : attachments) {
+                        Blob contentData = (Blob)attachment.get('blob');
+                        String fileName = (String)attachment.get('fileName');
+                        String fileExtension = (String)attachment.get('fileExtension');
+                        
+                        // Create a Map to hold the Blob and its metadata
+                        Map<String, Object> blobAttachment = new Map<String, Object>{
+                            'blob' => contentData,
+                            'fileName' => fileName + '.' + fileExtension
+                        }; 
+                        uploadFileToBox(blobAttachment, caseIdFolder);
+                    }
+
+                    // Access EmailMessages
+                    String emailMessagesContent = '';
+
+                    for (EmailMessage e : emailMessages) {
+                        String emailContent = 'Email Id: ' + e.Id + '<br>' + 'Email Subject: ' + e.Subject + '<br>' + 'Email TextBody: ' + e.TextBody + '<br><br>';
+                        emailMessagesContent += emailContent;
+                    }
+                    Blob emailPdfBlob = Blob.toPdf(emailMessagesContent);
+                    String emailPdfFileName = 'Emails.pdf';
+
+                    // Create a Map to hold the PDF Blob and its metadata
+                    Map<String, Object> emailPdfAttachment = new Map<String, Object>{
+                        'blob' => emailPdfBlob,
+                        'fileName' => emailPdfFileName,
+                        'fileType' => 'application/pdf'
+                    };
+
+                    // Upload the email details PDF to Box
+                    uploadFileToBox(emailPdfAttachment, caseIdFolder);
+                    // Create a Map to hold the EmailMessages Blob and its metadata
+                    Map<String, Object> emailMessagesAttachment = new Map<String, Object>{
+                        'blob' => Blob.valueOf(emailMessagesContent),
+                        'fileName' => 'EmailMessages.html'
+                    };
+                    
+                    // Create Case files & upload
+                    String pdfContent = 'Case Number: ' + caseNumber + '<br>' + 'Subject: ' + subject + '<br>' +
+                    'Description: ' + description + '<br>' + 'Closed Date: ' + closedDate + '<br>' +
+                    'Created Date: ' + createdDate + '<br>' + 'Origin: ' + origin + '<br>' +
+                    'Account Id: ' + accountId + '<br>' + 'Account Name: ' + accountName + '<br>' + 
+                    'Contact Id: ' + contactId + '<br>' + 'Contact Name: ' + contactName + '<br>' + 
+                    'Owner Id: ' + ownerId + '<br>' + 'Owner Name: ' + ownerName + '<br>' +
+                    'Number of Emails: ' + emailMessages.size() + '<br>' +
+                    'Number of Attachments: ' + attachments.size() + '<br>' + '...more fields';
+                    Blob pdfBlob = Blob.toPdf(pdfContent);
+                    String pdfFileName = 'Case-details.pdf';
+                    // Create a Map to hold the PDF Blob and its metadata
+                    Map<String, Object> pdfAttachment = new Map<String, Object>{
+                        'blob' => pdfBlob,
+                        'fileName' => pdfFileName,
+                        'fileType' => 'application/pdf'
+                    };
+
+                    // Upload the case details PDF to Box
+                    uploadFileToBox(pdfAttachment, caseIdFolder);
+                }
+            }
+        } 
     }
 
     private static HttpResponse makeBoxApiCall(String endpoint, String method, String attributes, Blob fileBlob, String body, String fileName) {
