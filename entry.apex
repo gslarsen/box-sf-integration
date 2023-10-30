@@ -1,1 +1,1 @@
-CaseArchiveHandler.archiveCases();
+CasesArchiveToBox.archiveCases();
