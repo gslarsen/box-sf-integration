@@ -59,7 +59,7 @@ public with sharing class CasesArchiveToBox {
     // Email Messages related to Cases
     private static void fetchEmails(Map<Id, List<List<Object>>> caseToEmailsAndAttachments, List<Id> caseIds, Map<Id, Id> emailToCaseMap) {
         if (Schema.sObjectType.EmailMessage.isAccessible()) {
-            for (EmailMessage e : [SELECT Id, ParentId, HasAttachment, Subject, TextBody FROM EmailMessage WHERE ParentId IN :caseIds]) {
+            for (EmailMessage e : [SELECT Id, ParentId, HasAttachment, FromName, FromAddress, MessageDate, ToAddress, CcAddress, BccAddress, Subject, HtmlBody FROM EmailMessage WHERE ParentId IN :caseIds]) {
                 if (caseToEmailsAndAttachments.containsKey(e.ParentId)) {
                     caseToEmailsAndAttachments.get(e.ParentId)[1].add(e);
                     emailToCaseMap.put(e.Id, e.ParentId);
@@ -182,7 +182,13 @@ public with sharing class CasesArchiveToBox {
                     String emailMessagesContent = '';
 
                     for (EmailMessage e : emailMessages) {
-                        String emailContent = 'Email Id: ' + e.Id + '<br>' + 'Email Subject: ' + e.Subject + '<br>' + 'Email TextBody: ' + e.TextBody + '<br><br>';
+                        String emailContent = 'Email Id: ' + e.Id + '<br>' + 
+                        'From: ' + e.FromName + ' [' + e.FromAddress + ']' + '<br>' + 
+                        'Sent: ' + String.valueOf(e.MessageDate) + '<br>' + 
+                        'To: ' + e.ToAddress + '<br>' +  
+                        'Cc: ' + (e.CcAddress == null ? '' : e.CcAddress) + '<br>' + 
+                        'Bcc: ' + (e.BccAddress == null ? '' : e.BccAddress) + '<br>' + 
+                        'Subject: ' + e.Subject + '<br><br>' + e.HtmlBody + '<br><br>';
                         emailMessagesContent += emailContent;
                     }
                     Blob emailPdfBlob = Blob.toPdf(emailMessagesContent);
