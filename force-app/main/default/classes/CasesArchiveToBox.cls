@@ -1,42 +1,32 @@
 public with sharing class CasesArchiveToBox {
     public static final String ACCOUNTS_FOLDER = '232841054083';
     public static final String CONTACTS_FOLDER = '232841229558';
-    // REMOVE TIME ITEMS
-    private static DateTime startTime;
-    private static Long startMs;
-    private static DateTime endTime;
-    private static Long endMs;
     
     @future(callout=true)
     public static void archiveCases() {
-        // REMOVE TIME ITEMS
-        startTime = DateTime.now();
-        startMs = DateTime.now().getTime();
-        
-        Map<Id, List<List<Object>>> caseToEmailsAndAttachments = fetchCasesAndMetadata();
+        Map<Id, List<Object>> caseToEmailsAndAttachments = fetchCasesAndMetadata();
         if (caseToEmailsAndAttachments.isEmpty()) {
+            System.debug('No cases found...returning');
             return;
         }
-        List<Id> caseIds = new List<Id>(caseToEmailsAndAttachments.keySet());
-
-        Map<Id, Id> emailToCaseMap = new Map<Id, Id>();
-        fetchEmails(caseToEmailsAndAttachments, caseIds, emailToCaseMap);
         
-        List<Id> emailIds = new List<Id>(emailToCaseMap.keySet());
+        List<Id> caseIds = new List<Id>(caseToEmailsAndAttachments.keySet());
+        Map<Id, Id> emailToCaseMap = new Map<Id, Id>();
+        List<Id> emailIds = fetchEmails(caseToEmailsAndAttachments, caseIds, emailToCaseMap);
         List<Id> combinedIds = new List<Id>();
         combinedIds.addAll(caseIds);
         combinedIds.addAll(emailIds);
         
         fetchAttachments(caseToEmailsAndAttachments, combinedIds, emailToCaseMap);
-        fetchComments(caseToEmailsAndAttachments, caseIds, emailToCaseMap);
+        fetchComments(caseToEmailsAndAttachments, caseIds);
 
         // Now caseToEmailsAndAttachments contains metadata, EmailMessages, and file binary data for each Case
         sendToBox(caseToEmailsAndAttachments);
     }
 
     // Case IDs and initial metadata
-    private static Map<Id, List<List<Object>>> fetchCasesAndMetadata() {
-        Map<Id, List<List<Object>>> caseToEmailsAndAttachments = new Map<Id, List<List<Object>>>();
+    private static Map<Id, List<Object>> fetchCasesAndMetadata() {
+        Map<Id, List<Object>> caseToEmailsAndAttachments = new Map<Id, List<Object>>();
 
         if (Schema.sObjectType.Case.isAccessible()) {
             List<Case> cases = [SELECT Id, CaseNumber, Subject, Description, ClosedDate, CreatedDate, Origin, AccountId, Account.Name, ContactId, Contact.Name, OwnerId, Owner.Name, Status, Priority, Reason, Type, SuppliedEmail, SuppliedCompany, SuppliedName, SuppliedPhone FROM Case WHERE ClosedDate = LAST_N_DAYS:60];
@@ -45,10 +35,31 @@ public with sharing class CasesArchiveToBox {
                 return caseToEmailsAndAttachments;
             }
             for (Case c : cases) {
-                caseToEmailsAndAttachments.put(c.Id, new List<List<Object>> {
-                    new List<String>{c.CaseNumber, c.Subject, c.Description, String.valueOf(c.ClosedDate), String.valueOf(c.CreatedDate), c.Origin, c.AccountId, c.Account.Name, c.ContactId, c.Contact.Name, c.OwnerId, c.Owner.Name, c.Status, c.Priority, c.Reason, c.Type, c.SuppliedEmail, c.SuppliedCompany, c.SuppliedName, c.SuppliedPhone},
+                caseToEmailsAndAttachments.put(c.Id, new List<Object> {
+                    new Map<String, String>{
+                        'caseNumber' => c.CaseNumber, 
+                        'subject' => c.Subject, 
+                        'description' => c.Description, 
+                        'closedDate' => String.valueOf(c.ClosedDate), 
+                        'createdDate' => String.valueOf(c.CreatedDate), 
+                        'origin' => c.Origin, 
+                        'accountId' => c.AccountId, 
+                        'accountName' => c.Account.Name, 
+                        'contactId' => c.ContactId, 
+                        'contactName' => c.Contact.Name, 
+                        'ownerId' => c.OwnerId, 
+                        'ownerName' => c.Owner.Name, 
+                        'status' => c.Status, 
+                        'priority' => c.Priority, 
+                        'reason' => c.Reason, 
+                        'type' => c.Type, 
+                        'suppliedEmail' => c.SuppliedEmail, 
+                        'suppliedCompany' => c.SuppliedCompany, 
+                        'suppliedName' => c.SuppliedName, 
+                        'suppliedPhone' => c.SuppliedPhone
+                    },
                     new List<EmailMessage>(),
-                    new List<Map<String, Object>>(), // List of Maps to store file metadata
+                    new List<Map<String, Object>>(), // attachments
                     new List<CaseComment>()
                 });                
             }
@@ -59,25 +70,30 @@ public with sharing class CasesArchiveToBox {
     }
 
     // Email Messages related to Cases
-    private static void fetchEmails(Map<Id, List<List<Object>>> caseToEmailsAndAttachments, List<Id> caseIds, Map<Id, Id> emailToCaseMap) {
+    private static List<String> fetchEmails(Map<Id, List<Object>> caseToEmailsAndAttachments, List<Id> caseIds, Map<Id, Id> emailToCaseMap) {
+        List<String> emailIdsWithAttachments = new List<String>();
         if (Schema.sObjectType.EmailMessage.isAccessible()) {
             for (EmailMessage e : [SELECT Id, ParentId, HasAttachment, FromName, FromAddress, MessageDate, ToAddress, CcAddress, BccAddress, Subject, HtmlBody FROM EmailMessage WHERE ParentId IN :caseIds]) {
                 if (caseToEmailsAndAttachments.containsKey(e.ParentId)) {
-                    caseToEmailsAndAttachments.get(e.ParentId)[1].add(e);
+                    ((List<EmailMessage>)caseToEmailsAndAttachments.get(e.ParentId)[1]).add(e);
                     emailToCaseMap.put(e.Id, e.ParentId);
+                }
+                if (e.HasAttachment) {
+                    emailIdsWithAttachments.add(e.Id);
                 }
             }
         } else { 
             System.debug('Case is not accessible');
         }
+        return emailIdsWithAttachments;
     }
 
     // comments related to Cases
-    private static void fetchComments(Map<Id, List<List<Object>>> caseToEmailsAndAttachments, List<Id> caseIds, Map<Id, Id> emailToCaseMap) {
+    private static void fetchComments(Map<Id, List<Object>> caseToEmailsAndAttachments, List<Id> caseIds) {
         if (Schema.sObjectType.CaseComment.isAccessible()) {
             for (CaseComment c : [SELECT Id, ParentId, CommentBody, CreatedDate, CreatedById, CreatedBy.Name FROM CaseComment WHERE ParentId IN :caseIds]) {
                 if (caseToEmailsAndAttachments.containsKey(c.ParentId)) {
-                    caseToEmailsAndAttachments.get(c.ParentId)[3].add(c);
+                    ((List<CaseComment>)caseToEmailsAndAttachments.get(c.ParentId)[3]).add(c);
                 }
             }
         } else { 
@@ -86,7 +102,7 @@ public with sharing class CasesArchiveToBox {
     }
 
     // Attachments related to Cases and Emails
-    private static void fetchAttachments(Map<Id, List<List<Object>>> caseToEmailsAndAttachments, List<Id> combinedIds, Map<Id, Id> emailToCaseMap) {
+    private static void fetchAttachments(Map<Id, List<Object>> caseToEmailsAndAttachments, List<Id> combinedIds, Map<Id, Id> emailToCaseMap) {
         if (!Schema.sObjectType.ContentDocumentLink.isAccessible() || !Schema.sObjectType.ContentVersion.isAccessible()) {
             System.debug('ContentDocumentLink or ContentVersion is not accessible');
             return;
@@ -110,8 +126,8 @@ public with sharing class CasesArchiveToBox {
 
         for (ContentDocumentLink cdl : contentDocumentLinks) {
             Id parentCaseId = cdl.LinkedEntityId;
-            if(emailToCaseMap.containsKey(cdl.LinkedEntityId)) {
-                parentCaseId = emailToCaseMap.get(cdl.LinkedEntityId);
+            if(emailToCaseMap.containsKey(parentCaseId)) {
+                parentCaseId = emailToCaseMap.get(parentCaseId);
             }
         
             if (caseToEmailsAndAttachments.containsKey(parentCaseId)) {
@@ -123,11 +139,11 @@ public with sharing class CasesArchiveToBox {
         }        
     }
 
-    private static void sendToBox(Map<Id, List<List<Object>>> caseToEmailsAndAttachments) {
+    private static void sendToBox(Map<Id, List<Object>> caseToEmailsAndAttachments) {
         for (Id caseId : caseToEmailsAndAttachments.keySet()) {
-            List<String> metadata = (List<String>) caseToEmailsAndAttachments.get(caseId)[0];
-            String accountId = metadata[6];
-            String contactId = metadata[8];
+            Map<String, String> metadata = (Map<String, String>) caseToEmailsAndAttachments.get(caseId)[0];
+            String accountId = metadata.get('accountId');
+            String contactId = metadata.get('contactId');
             if (accountId != null && accountId != '') {
                 createFoldersAndUpload(caseId, caseToEmailsAndAttachments, 'Accounts');
             } else if (contactId != null && contactId != '') {
@@ -139,37 +155,37 @@ public with sharing class CasesArchiveToBox {
     }
 
     // create folder structure Accounts or Contacts folder
-    private static void createFoldersAndUpload(String caseId, Map<Id, List<List<Object>>> caseToEmailsAndAttachments, String type) {
+    private static void createFoldersAndUpload(String caseId, Map<Id, List<Object>> caseToEmailsAndAttachments, String type) {
         if (caseId == null || caseId == '' || caseToEmailsAndAttachments == null || type == null || type == '') {
             return;
         } 
         
         String parent = '';
         String id = '';
-        List<String> metadata = (List<String>) caseToEmailsAndAttachments.get(caseId)[0];
+        Map<String, String> metadata = (Map<String, String>) caseToEmailsAndAttachments.get(caseId)[0];
         List<EmailMessage> emailMessages = (List<EmailMessage>) caseToEmailsAndAttachments.get(caseId)[1];
         List<Map<String, Object>> attachments = (List<Map<String, Object>>) caseToEmailsAndAttachments.get(caseId)[2];
         List<CaseComment> comments = (List<CaseComment>) caseToEmailsAndAttachments.get(caseId)[3];
-        String caseNumber = metadata[0];
-        String subject = metadata[1];
-        String description = metadata[2];
-        String closedDate = metadata[3];
-        String createdDate = metadata[4];
-        String origin = metadata[5];
-        String accountId = metadata[6];
-        String accountName = metadata[7];
-        String contactId = metadata[8];
-        String contactName = metadata[9];
-        String ownerId = metadata[10];
-        String ownerName = metadata[11];
-        String status = metadata[12];
-        String priority = metadata[13];
-        String reason = metadata[14];
-        String caseType = metadata[15];
-        String suppliedEmail = metadata[16];
-        String suppliedCompany = metadata[17];
-        String suppliedName = metadata[18];
-        String suppliedPhone = metadata[19];
+        String caseNumber = metadata.get('caseNumber'); 
+        String subject = metadata.get('subject');
+        String description = metadata.get('description');
+        String status = metadata.get('status');
+        String closedDate = metadata.get('closedDate');
+        String createdDate = metadata.get('createdDate');
+        String origin = metadata.get('origin');
+        String accountId = metadata.get('accountId');
+        String accountName = metadata.get('accountName');
+        String contactId = metadata.get('contactId');
+        String contactName = metadata.get('contactName');
+        String ownerId = metadata.get('ownerId');
+        String ownerName = metadata.get('ownerName');
+        String priority = metadata.get('priority');
+        String reason = metadata.get('reason');
+        String caseType = metadata.get('type');
+        String suppliedEmail = metadata.get('suppliedEmail');
+        String suppliedCompany = metadata.get('suppliedCompany');
+        String suppliedName = metadata.get('suppliedName');
+        String suppliedPhone = metadata.get('suppliedPhone');
 
         String folder = '';
         String casesFolder = '';
@@ -231,17 +247,18 @@ public with sharing class CasesArchiveToBox {
                     
                     // Create Case files & upload
                     String pdfContent = 'Case Number: ' + caseNumber + '<br>' + 'Subject: ' + subject + '<br>' +
+                    'Status: ' + status + '<br>' + 'Priority: ' + priority + '<br>' +
                     'Description: ' + description + '<br>' + 'Closed Date: ' + closedDate + '<br>' +
                     'Created Date: ' + createdDate + '<br>' + 'Origin: ' + origin + '<br>' +
                     'Account Id: ' + accountId + '<br>' + 'Account Name: ' + accountName + '<br>' + 
                     'Contact Id: ' + contactId + '<br>' + 'Contact Name: ' + contactName + '<br>' + 
                     'Owner Id: ' + ownerId + '<br>' + 'Owner Name: ' + ownerName + '<br>' +
-                    'Status: ' + status + '<br>' + 'Priority: ' + priority + '<br>' +
                     'Reason: ' + reason + '<br>' + 'Type: ' + caseType + '<br>' +
                     'Supplied Email: ' + suppliedEmail + '<br>' + 'Supplied Company: ' + suppliedCompany + '<br>' +
                     'Supplied Name: ' + suppliedName + '<br>' + 'Supplied Phone: ' + suppliedPhone + '<br>' +
                     'Number of Emails: ' + emailMessages.size() + '<br>' +
-                    'Number of Attachments: ' + attachments.size() + '<br>' + '...additional req\'d fields';
+                    'Number of Attachments: ' + attachments.size() + '<br>' + 
+                    '...additional req\'d fields';
                     
                     // Access Comments
                     String commentsContent = '';
@@ -268,7 +285,7 @@ public with sharing class CasesArchiveToBox {
             }
         } 
         // REMOVE CASE
-        deleteCase(caseId);
+        // deleteCase(caseId);
     }
 
     private static HttpResponse makeBoxApiCall(String endpoint, String method, String attributes, Blob fileBlob, String body, String fileName) {
@@ -395,9 +412,5 @@ public with sharing class CasesArchiveToBox {
                 System.debug('Failed to upload file: ' + fileResponse.getBody());
             }
         }
-        // REMOVE TIME ITEMS
-        endTime = DateTime.now();
-        endMs = DateTime.now().getTime();
-        System.debug('TOTAL TIME: ' + (endMs - startMs));
     }    
 }
