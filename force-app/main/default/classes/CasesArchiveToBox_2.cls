@@ -1,37 +1,38 @@
 public with sharing class CasesArchiveToBox {
-    private static final String ACCOUNTS_FOLDER = '232841054083'; // change these to applicable Box folder IDs
-    private static final String CONTACTS_FOLDER = '232841229558'; 
-    private static final Integer DAYS = 60; // how many days back to look for cases; NOTE: change SOQL in fetchCasesAndMetadata() to be < LAST_N_DAYS:DAYS
-    private static Map<Id, List<Object>> caseToEmailsAndAttachments = new Map<Id, List<Object>>();
+    public static final String ACCOUNTS_FOLDER = '232841054083';
+    public static final String CONTACTS_FOLDER = '232841229558';
     
     // @future(callout=true)
     public static void archiveCases() {
-        fetchCasesAndMetadata();
+        Map<Id, List<Object>> caseToEmailsAndAttachments = fetchCasesAndMetadata();
         if (caseToEmailsAndAttachments.isEmpty()) {
-            System.debug('No cases found-returning');
+            System.debug('No cases found...returning');
             return;
         }
         
         List<Id> caseIds = new List<Id>(caseToEmailsAndAttachments.keySet());
         Map<Id, Id> emailToCaseMap = new Map<Id, Id>();
-        List<Id> emailIds = fetchEmails(caseIds, emailToCaseMap);
+        List<Id> emailIds = fetchEmails(caseToEmailsAndAttachments, caseIds, emailToCaseMap);
         List<Id> combinedIds = new List<Id>();
         combinedIds.addAll(caseIds);
         combinedIds.addAll(emailIds);
         
-        fetchAttachments(combinedIds, emailToCaseMap);
-        fetchComments(caseIds);
-        sendToBox();
+        fetchAttachments(caseToEmailsAndAttachments, combinedIds, emailToCaseMap);
+        fetchComments(caseToEmailsAndAttachments, caseIds);
+
+        // Now caseToEmailsAndAttachments contains metadata, EmailMessages, and file binary data for each Case
+        sendToBox(caseToEmailsAndAttachments);
     }
 
     // Case IDs and initial metadata
-    private static void fetchCasesAndMetadata() {
+    private static Map<Id, List<Object>> fetchCasesAndMetadata() {
+        Map<Id, List<Object>> caseToEmailsAndAttachments = new Map<Id, List<Object>>();
 
         if (Schema.sObjectType.Case.isAccessible()) {
-            String query = 'SELECT Id, CaseNumber, Subject, Description, ClosedDate, CreatedDate, CreatedById, LastModifiedById, Origin, AccountId, Account.Name, ContactId, Contact.Name, OwnerId, Owner.Name, Status, Priority, Reason, Type, SuppliedEmail, SuppliedCompany, SuppliedName, SuppliedPhone FROM Case WHERE ClosedDate = LAST_N_DAYS:' + DAYS;
-            List<Case> cases = Database.query(query);
+            List<Case> cases = [SELECT Id, CaseNumber, Subject, Description, ClosedDate, IsClosedOnCreate, CreatedDate, CreatedById, LastModifiedById, Origin, AccountId, Account.Name, ContactId, Contact.Name, ContactEmail, ContactPhone, OwnerId, Owner.Name, Status, Priority, Reason, Type, SuppliedEmail, SuppliedCompany, SuppliedName, SuppliedPhone FROM Case WHERE ClosedDate = LAST_N_DAYS:60];
             if (cases.isEmpty()) {
-                System.debug('No cases found-returning');
+                System.debug('No cases found...returning');
+                return caseToEmailsAndAttachments;
             }
             for (Case c : cases) {
                 caseToEmailsAndAttachments.put(c.Id, new List<Object> {
@@ -41,11 +42,14 @@ public with sharing class CasesArchiveToBox {
                         'description' => c.Description, 
                         'closedDate' => String.valueOf(c.ClosedDate), 
                         'createdDate' => String.valueOf(c.CreatedDate),
+                        'IsClosedOnCreate' => String.valueOf(c.IsClosedOnCreate), 
                         'origin' => c.Origin, 
                         'accountId' => c.AccountId, 
                         'accountName' => c.Account.Name, 
                         'contactId' => c.ContactId, 
                         'contactName' => c.Contact.Name, 
+                        'contactEmail' => c.ContactEmail,
+                        'contactPhone' => c.ContactPhone,
                         'ownerId' => c.OwnerId, 
                         'ownerName' => c.Owner.Name, 
                         'lastModifiedById' => c.LastModifiedById,
@@ -67,10 +71,11 @@ public with sharing class CasesArchiveToBox {
         } else {
             System.debug('Case is not accessible');
         }
+        return caseToEmailsAndAttachments;
     }
 
     // Email Messages related to Cases
-    private static List<String> fetchEmails(List<Id> caseIds, Map<Id, Id> emailToCaseMap) {
+    private static List<String> fetchEmails(Map<Id, List<Object>> caseToEmailsAndAttachments, List<Id> caseIds, Map<Id, Id> emailToCaseMap) {
         List<String> emailIdsWithAttachments = new List<String>();
         if (Schema.sObjectType.EmailMessage.isAccessible()) {
             for (EmailMessage e : [SELECT Id, ParentId, HasAttachment, FromName, FromAddress, MessageDate, ToAddress, CcAddress, BccAddress, Subject, HtmlBody FROM EmailMessage WHERE ParentId IN :caseIds]) {
@@ -89,7 +94,7 @@ public with sharing class CasesArchiveToBox {
     }
 
     // comments related to Cases
-    private static void fetchComments(List<Id> caseIds) {
+    private static void fetchComments(Map<Id, List<Object>> caseToEmailsAndAttachments, List<Id> caseIds) {
         if (Schema.sObjectType.CaseComment.isAccessible()) {
             for (CaseComment c : [SELECT Id, ParentId, CommentBody, CreatedDate, CreatedById, CreatedBy.Name FROM CaseComment WHERE ParentId IN :caseIds]) {
                 if (caseToEmailsAndAttachments.containsKey(c.ParentId)) {
@@ -102,7 +107,7 @@ public with sharing class CasesArchiveToBox {
     }
 
     // Attachments related to Cases and Emails
-    private static void fetchAttachments(List<Id> combinedIds, Map<Id, Id> emailToCaseMap) {
+    private static void fetchAttachments(Map<Id, List<Object>> caseToEmailsAndAttachments, List<Id> combinedIds, Map<Id, Id> emailToCaseMap) {
         if (!Schema.sObjectType.ContentDocumentLink.isAccessible() || !Schema.sObjectType.ContentVersion.isAccessible()) {
             System.debug('ContentDocumentLink or ContentVersion is not accessible');
             return;
@@ -139,15 +144,15 @@ public with sharing class CasesArchiveToBox {
         }        
     }
 
-    private static void sendToBox() {
+    private static void sendToBox(Map<Id, List<Object>> caseToEmailsAndAttachments) {
         for (Id caseId : caseToEmailsAndAttachments.keySet()) {
             Map<String, String> metadata = (Map<String, String>) caseToEmailsAndAttachments.get(caseId)[0];
             String accountId = metadata.get('accountId');
             String contactId = metadata.get('contactId');
             if (accountId != null && accountId != '') {
-                prepareFoldersAndUpload(caseId, 'Accounts');
+                prepareFoldersAndUpload(caseId, caseToEmailsAndAttachments, 'Accounts');
             } else if (contactId != null && contactId != '') {
-                prepareFoldersAndUpload(caseId, 'Contacts');
+                prepareFoldersAndUpload(caseId, caseToEmailsAndAttachments, 'Contacts');
             } else {
                 return;
             }
@@ -155,7 +160,7 @@ public with sharing class CasesArchiveToBox {
     }
 
     // create folder structure Accounts or Contacts folder
-    private static void prepareFoldersAndUpload(String caseId, String type) {
+    private static void prepareFoldersAndUpload(String caseId, Map<Id, List<Object>> caseToEmailsAndAttachments, String type) {
         if (caseId == null || caseId == '' || caseToEmailsAndAttachments == null || type == null || type == '') {
             return;
         } 
@@ -235,6 +240,9 @@ public with sharing class CasesArchiveToBox {
                     'Last Modified By Id: ' + metadata.get('lastModifiedById') + '<br>' + 
                     'Account Id: ' + accountId + '<br>' + 'Account Name: ' + metadata.get('accountName') + '<br>' + 
                     'Contact Id: ' + contactId + '<br>' + 'Contact Name: ' + metadata.get('contactName') + '<br>' + 
+                    // 'Contact Email: ' + metadata.get('contactEmail') + '<br>' +
+                    // 'Contact Phone: ' + metadata.get('contactPhone') + '<br>' +
+                    // 'Is Closed On Create: ' + metadata.get('IsClosedOnCreate') + '<br>' + 
                     'Owner Id: ' + metadata.get('ownerId') + '<br>' + 'Owner Name: ' + metadata.get('ownerName') + '<br>' +
                     'Reason: ' + metadata.get('reason') + '<br>' + 'Type: ' + metadata.get('caseType') + '<br>' +
                     'Supplied Email: ' + metadata.get('suppliedEmail') + '<br>' + 'Supplied Company: ' + metadata.get('suppliedCompany') + '<br>' +
@@ -272,7 +280,7 @@ public with sharing class CasesArchiveToBox {
 
     private static String getOrCreateFolder(String parentId, String folderName) {
         // Check if folder exists
-        HttpResponse res = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders/' + parentId + '/items', 'method' => 'GET', 'attributes' => null, 'body' => null, 'fileName' => null}, null);
+        HttpResponse res = makeBoxApiCall('folders/' + parentId + '/items', 'GET', null, null, null, null);
     
         if (res.getStatusCode() == 200) {
             // Parse the JSON response
@@ -293,9 +301,9 @@ public with sharing class CasesArchiveToBox {
             }
         }
     
-        // folder does not exist, so create it
+        // If folder does not exist, create it
         String folderBody = '{"name":"' + folderName + '", "parent": {"id":"' + parentId + '"}}';
-        HttpResponse createRes = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders', 'method' => 'POST', 'attributes' => null, 'body' => folderBody, 'fileName' => null}, null);
+        HttpResponse createRes = makeBoxApiCall('folders', 'POST', null, null, folderBody, null);
         if (createRes.getStatusCode() == 201) {
             // Parse JSON response to get new folder ID
             Map<String, Object> createResponse = (Map<String, Object>) JSON.deserializeUntyped(createRes.getBody());
@@ -308,30 +316,30 @@ public with sharing class CasesArchiveToBox {
         return null; // Error condition
     }
 
-    private static HttpResponse makeBoxApiCall(Map<String, String> config, Blob fileBlob) {
+    private static HttpResponse makeBoxApiCall(String endpoint, String method, String attributes, Blob fileBlob, String body, String fileName) {
         Http http = new Http();
         HttpRequest req = new HttpRequest();
-        req.setMethod(config.get('method'));
+        req.setMethod(method);
     
         if (fileBlob != null) {
-            req.setEndpoint('callout:boxUpload/' + config.get('endpoint'));
+            req.setEndpoint('callout:boxUpload/' + endpoint);
         } else {
-            System.debug('FILE BLOB IS NULL for fileName: ' + config.get('fileName') + ' and attributes: ' + config.get('attributes'));
-            req.setEndpoint('callout:box/' + config.get('endpoint'));
+            System.debug('FILE BLOB IS NULL for fileName: ' + fileName + ' and attributes: ' + attributes);
+            req.setEndpoint('callout:box/' + endpoint);
         }
         
-        if (String.isNotBlank(config.get('body')) && fileBlob == null) {
+        if (String.isNotBlank(body) && fileBlob == null) {
             req.setHeader('Content-Type', 'application/json');
-            req.setBody(config.get('body'));
+            req.setBody(body);
         }
         
         if (fileBlob != null) {
-            Map<String, Object> m = (Map<String, Object>) JSON.deserializeUntyped(config.get('attributes'));
+            Map<String, Object> m = (Map<String, Object>) JSON.deserializeUntyped(attributes);
             Map<String, Object> m2 = (Map<String, Object>) m.get('parent');
             String folderId = (String) m2.get('id');
-            blob base64File = base64EncodeBinary(fileBlob, config.get('fileName'));
+            blob base64File = base64EncodeBinary(fileBlob, filename);
             String boundary = '----------------------------123456789';
-            String body = '{"name":"' + config.get('fileName') + '", "parent":{"id":"' + folderId + '"}}';
+            body = '{"name":"' + fileName + '", "parent":{"id":"' + folderId + '"}}';
             req.setBody(body);
             req.setBodyAsBlob(base64File);
             req.setHeader('Content-Type','multipart/form-data; boundary=' + boundary);
@@ -379,14 +387,14 @@ public with sharing class CasesArchiveToBox {
         if (caseIdFolder != null && caseIdFolder != '') {
             String fileEndpoint = 'files/content?parent_id=' + caseIdFolder;
             Map<String, Object> parentFolder = new Map<String, Object>{ 'id' => caseIdFolder };
-            Map<String, Object> fileAttributes = new Map<String, Object>{
+            Map<String, Object> attributes = new Map<String, Object>{
                 'name' => fileName,
                 'parent' => parentFolder,
                 'content_created_at' => '',
                 'content_modified_at' => ''
             };
-            String attributes = JSON.serialize(fileAttributes);
-            HttpResponse fileResponse = makeBoxApiCall(new Map<String, String>{'endpoint' => fileEndpoint, 'method' => 'POST', 'attributes' => attributes, 'body' => null, 'fileName' => fileName}, fileBlob);
+            String fileBody = JSON.serialize(attributes);
+            HttpResponse fileResponse = makeBoxApiCall(fileEndpoint, 'POST', fileBody, fileBlob, null, fileName);
             
             if (fileResponse.getStatusCode() == 201) {
                 System.debug('File uploaded successfully');
