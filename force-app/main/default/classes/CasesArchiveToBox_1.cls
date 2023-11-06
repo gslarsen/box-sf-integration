@@ -1,6 +1,6 @@
 public with sharing class CasesArchiveToBox {
     public static final String ACCOUNTS_FOLDER = '232841054083';
-    public static final String CONTACTS_FOLDER = '232841229558';
+    public static final String CONTACTS_FOLDER = '234058604832';
     
     @future(callout=true)
     public static void archiveCases() {

@@ -1,10 +1,10 @@
 public with sharing class CasesArchiveToBox {
     private static final String ACCOUNTS_FOLDER = '232841054083'; // change these to applicable Box folder IDs
-    private static final String CONTACTS_FOLDER = '232841229558'; 
+    private static final String CONTACTS_FOLDER = '234058604832'; 
     private static final Integer DAYS = 60; // how many days back to look for cases; NOTE: change SOQL in fetchCasesAndMetadata() to be < LAST_N_DAYS:DAYS
     private static Map<Id, List<Object>> caseToEmailsAndAttachments = new Map<Id, List<Object>>();
     
-    // @future(callout=true)
+    @future(callout=true)
     public static void archiveCases() {
         fetchCasesAndMetadata();
         if (caseToEmailsAndAttachments.isEmpty()) {
@@ -164,8 +164,11 @@ public with sharing class CasesArchiveToBox {
         List<EmailMessage> emailMessages = (List<EmailMessage>) caseToEmailsAndAttachments.get(caseId)[1];
         List<Map<String, Object>> attachments = (List<Map<String, Object>>) caseToEmailsAndAttachments.get(caseId)[2];
         List<CaseComment> comments = (List<CaseComment>) caseToEmailsAndAttachments.get(caseId)[3];
+        String caseNumber = metadata.get('caseNumber');
         String accountId = metadata.get('accountId');
+        String accountName = metadata.get('accountName');
         String contactId = metadata.get('contactId');
+        String contactName = metadata.get('contactName');
         String parent = '';
         String id = '';
         String folder = '';
@@ -184,7 +187,7 @@ public with sharing class CasesArchiveToBox {
         if (folder != null && folder != '') {
             casesFolder = getOrCreateFolder(folder, 'Cases');
             if (casesFolder != null && casesFolder != '') {
-                caseIdFolder = getOrCreateFolder(casesFolder, caseId);
+                caseIdFolder = getOrCreateFolder(casesFolder, caseId + '-' + caseNumber);
                 if (caseIdFolder != null && caseIdFolder != '') {
                     // Access Blob data and Metadata
                     for (Map<String, Object> attachment : attachments) {
@@ -307,7 +310,7 @@ public with sharing class CasesArchiveToBox {
     
         return null; // Error condition
     }
-
+    
     private static HttpResponse makeBoxApiCall(Map<String, String> config, Blob fileBlob) {
         Http http = new Http();
         HttpRequest req = new HttpRequest();
@@ -330,6 +333,9 @@ public with sharing class CasesArchiveToBox {
             Map<String, Object> m2 = (Map<String, Object>) m.get('parent');
             String folderId = (String) m2.get('id');
             blob base64File = base64EncodeBinary(fileBlob, config.get('fileName'));
+            if (base64File == null) {
+                return null;
+            }
             String boundary = '----------------------------123456789';
             String body = '{"name":"' + config.get('fileName') + '", "parent":{"id":"' + folderId + '"}}';
             req.setBody(body);
@@ -351,7 +357,13 @@ public with sharing class CasesArchiveToBox {
             header+=' ';
             headerEncoded = EncodingUtil.base64Encode(Blob.valueOf(header+'\r\n\r\n'));
         }
+        System.debug('headerEncoded length: ' + headerEncoded.length());
         String bodyEncoded = EncodingUtil.base64Encode(fileBody);
+        System.debug('bodyEncoded length: ' + bodyEncoded.length());
+        if (bodyEncoded.length() > 12000000) {
+            System.debug('FILE SIZE OF: ' + fileName + ' IS TOO LARGE: ' + bodyEncoded.length());
+            return null;
+        }
         Blob bodyBlob = null;
         String last4Bytes = bodyEncoded.substring(bodyEncoded.length()-4,bodyEncoded.length());
   
@@ -367,6 +379,9 @@ public with sharing class CasesArchiveToBox {
         }
 
         String footerEncoded = EncodingUtil.base64Encode(Blob.valueOf(footer));
+        
+        
+        System.debug('footerEncoded length: ' + footerEncoded.length());
         bodyBlob = EncodingUtil.base64Decode(headerEncoded+bodyEncoded+footerEncoded);
         return bodyBlob;
     }
@@ -387,7 +402,10 @@ public with sharing class CasesArchiveToBox {
             };
             String attributes = JSON.serialize(fileAttributes);
             HttpResponse fileResponse = makeBoxApiCall(new Map<String, String>{'endpoint' => fileEndpoint, 'method' => 'POST', 'attributes' => attributes, 'body' => null, 'fileName' => fileName}, fileBlob);
-            
+            if (fileResponse == null) {
+                System.debug('http response is null; check filesize > 12MB; returning...');
+                return;
+            }
             if (fileResponse.getStatusCode() == 201) {
                 System.debug('File uploaded successfully');
             } else {
