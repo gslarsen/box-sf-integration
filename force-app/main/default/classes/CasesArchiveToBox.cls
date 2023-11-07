@@ -14,10 +14,10 @@ public with sharing class CasesArchiveToBox {
         
         List<Id> caseIds = new List<Id>(caseToEmailsAndAttachments.keySet());
         Map<Id, Id> emailToCaseMap = new Map<Id, Id>();
-        List<Id> emailIds = fetchEmails(caseIds, emailToCaseMap);
+        List<Id> emailIdsWithAttachments = fetchEmails(caseIds, emailToCaseMap);
         List<Id> combinedIds = new List<Id>();
         combinedIds.addAll(caseIds);
-        combinedIds.addAll(emailIds);
+        combinedIds.addAll(emailIdsWithAttachments);
         
         fetchAttachments(combinedIds, emailToCaseMap);
         fetchComments(caseIds);
@@ -60,7 +60,7 @@ public with sharing class CasesArchiveToBox {
                         'suppliedPhone' => c.SuppliedPhone
                     },
                     new List<EmailMessage>(),
-                    new List<Map<String, Object>>(), // attachments
+                    new List<Map<Id, Map<String, Object>>>(), // attachments
                     new List<CaseComment>()
                 });                
             }
@@ -73,7 +73,7 @@ public with sharing class CasesArchiveToBox {
     private static List<String> fetchEmails(List<Id> caseIds, Map<Id, Id> emailToCaseMap) {
         List<String> emailIdsWithAttachments = new List<String>();
         if (Schema.sObjectType.EmailMessage.isAccessible()) {
-            for (EmailMessage e : [SELECT Id, ParentId, HasAttachment, FromName, FromAddress, MessageDate, ToAddress, CcAddress, BccAddress, Subject, HtmlBody FROM EmailMessage WHERE ParentId IN :caseIds]) {
+            for (EmailMessage e : [SELECT Id, ParentId, ActivityId, CreatedById, CreatedDate, LastModifiedDate, LastModifiedById, SystemModstamp, TextBody, HtmlBody, Headers, Subject, Name, FromName, FromAddress, ValidatedFromAddress, ToAddress, CcAddress, BccAddress, Incoming, HasAttachment, Status, MessageDate, IsDeleted, ReplyToEmailMessageId, IsExternallyVisible, MessageIdentifier, ThreadIdentifier, ClientThreadIdentifier, IsClientManaged, RelatedToId, IsTracked, IsOpened, FirstOpenedDate, LastOpenedDate, IsBounced, EmailTemplateId FROM EmailMessage WHERE ParentId IN :caseIds]) {
                 if (caseToEmailsAndAttachments.containsKey(e.ParentId)) {
                     ((List<EmailMessage>)caseToEmailsAndAttachments.get(e.ParentId)[1]).add(e);
                     emailToCaseMap.put(e.Id, e.ParentId);
@@ -109,18 +109,21 @@ public with sharing class CasesArchiveToBox {
         }
         List<ContentDocumentLink> contentDocumentLinks = [SELECT ContentDocumentId, LinkedEntityId FROM ContentDocumentLink WHERE LinkedEntityId IN :combinedIds];
         List<Id> contentDocumentIds = new List<Id>();
+        Map<Id, Id> contentDocumentToEmailMap = new Map<Id, Id>();
         for (ContentDocumentLink cdl : contentDocumentLinks) {
             contentDocumentIds.add(cdl.ContentDocumentId);
+            contentDocumentToEmailMap.put(cdl.ContentDocumentId, cdl.LinkedEntityId);
         }
 
-        Map<Id, Map<String, Object>> contentIdToData = new Map<Id, Map<String, Object>>();
+        Map<Id, Map<Id, Map<String, Object>>> contentIdToData = new  Map<Id, Map<Id, Map<String, Object>>>();
         for (ContentVersion cv : [SELECT ContentDocumentId, VersionData, Title, FileType, FileExtension FROM ContentVersion WHERE ContentDocumentId IN :contentDocumentIds]) {
-            Map<String, Object> attachmentInfo = new Map<String, Object>{
+            Map<Id, Map<String, Object>> attachmentInfo = new Map<Id, Map<String, Object>>{
+                contentDocumentToEmailMap.get(cv.ContentDocumentId) => new Map<String, Object>{
                 'blob' => cv.VersionData,
                 'fileName' => cv.Title,
                 'fileType' => cv.FileType,
                 'fileExtension' => cv.FileExtension
-            };
+            }};
             contentIdToData.put(cv.ContentDocumentId, attachmentInfo);
         }       
 
@@ -131,9 +134,9 @@ public with sharing class CasesArchiveToBox {
             }
         
             if (caseToEmailsAndAttachments.containsKey(parentCaseId)) {
-                Map<String, Object> attachmentInfo = contentIdToData.get(cdl.ContentDocumentId);
+                Map<Id, Map<String, Object>> attachmentInfo = contentIdToData.get(cdl.ContentDocumentId);
                 if (attachmentInfo != null) {
-                    ((List<Map<String, Object>>)caseToEmailsAndAttachments.get(parentCaseId)[2]).add(attachmentInfo);
+                    ((List<Map<Id, Map<String, Object>>>)caseToEmailsAndAttachments.get(parentCaseId)[2]).add(attachmentInfo);
                 }
             }
         }        
@@ -162,7 +165,7 @@ public with sharing class CasesArchiveToBox {
         
         Map<String, String> metadata = (Map<String, String>) caseToEmailsAndAttachments.get(caseId)[0];
         List<EmailMessage> emailMessages = (List<EmailMessage>) caseToEmailsAndAttachments.get(caseId)[1];
-        List<Map<String, Object>> attachments = (List<Map<String, Object>>) caseToEmailsAndAttachments.get(caseId)[2];
+        List<Map<Id, Map<String, Object>>> attachments = (List<Map<Id, Map<String, Object>>>) caseToEmailsAndAttachments.get(caseId)[2];
         List<CaseComment> comments = (List<CaseComment>) caseToEmailsAndAttachments.get(caseId)[3];
         String caseNumber = metadata.get('caseNumber');
         String accountId = metadata.get('accountId');
@@ -174,6 +177,7 @@ public with sharing class CasesArchiveToBox {
         String folder = '';
         String casesFolder = '';
         String caseIdFolder = '';
+        Map<Id, Map<Id, Map<String, Object>>> attachmentsMap = new Map<Id, Map<Id, Map<String, Object>>>();
 
         if (type == 'Accounts') {
             parent = ACCOUNTS_FOLDER;
@@ -183,18 +187,31 @@ public with sharing class CasesArchiveToBox {
             id = contactId;
         }
 
-        folder = getOrCreateFolder(parent, id);
+        Boolean parentCreatedNow = false;
+        folder = getOrCreateFolder(parent, id, parentCreatedNow);
+        if (folder != null && folder != '' & folder.contains('-new')) {
+            parentCreatedNow = true;
+            folder = folder.replace('-new', '');
+        } 
+
         if (folder != null && folder != '') {
-            casesFolder = getOrCreateFolder(folder, 'Cases');
+            casesFolder = getOrCreateFolder(folder, 'Cases', parentCreatedNow);
             if (casesFolder != null && casesFolder != '') {
-                caseIdFolder = getOrCreateFolder(casesFolder, caseId + '-' + caseNumber);
+                caseIdFolder = getOrCreateFolder(casesFolder, caseId + '-' + caseNumber, true);
                 if (caseIdFolder != null && caseIdFolder != '') {
+                    caseIdFolder = caseIdFolder.replace('-new', '');
+                    System.debug('caseIdFolder: ' + caseIdFolder);
                     // Access Blob data and Metadata
-                    for (Map<String, Object> attachment : attachments) {
-                        Blob contentData = (Blob)attachment.get('blob');
-                        String fileName = (String)attachment.get('fileName');
-                        String fileExtension = (String)attachment.get('fileExtension');
-                        
+                    for (Map<Id, Map<String, Object>> attachment : attachments) {
+                        Id firstKey = new List<Id>(attachment.keySet())[0];
+
+                        System.debug('ATTACHMENT: ' + firstKey);
+                        Blob contentData = (Blob)attachment.get(firstKey).get('blob');
+                        String fileName = (String)attachment.get(firstKey).get('fileName');
+                        String fileExtension = (String)attachment.get(firstKey).get('fileExtension');
+                        attachmentsMap.put(firstKey, attachment);
+                        System.debug('attachmentsMap: ' + attachmentsMap);
+
                         // Create a Map to hold the Blob and its metadata
                         Map<String, Object> blobAttachment = new Map<String, Object>{
                             'blob' => contentData,
@@ -207,13 +224,72 @@ public with sharing class CasesArchiveToBox {
                     String emailMessagesContent = '';
 
                     for (EmailMessage e : emailMessages) {
-                        String emailContent = 'Email Id: ' + e.Id + '<br>' + 
+                        // Id, ParentId, ActivityId, CreatedById, CreatedDate, LastModifiedDate, LastModifiedById, SystemModstamp, TextBody, HtmlBody, Headers, Subject, Name, FromName, FromAddress, ValidatedFromAddress, ToAddress, CcAddress, BccAddress, Incoming, HasAttachment, Status, MessageDate, IsDeleted, ReplyToEmailMessageId, IsExternallyVisible, MessageIdentifier, ThreadIdentifier, ClientThreadIdentifier, IsClientManaged, RelatedToId, IsTracked, IsOpened, FirstOpenedDate, LastOpenedDate, IsBounced, EmailTemplateId
+                        System.debug('HEADERS: ' + e.Headers);
+                        String headers = '';
+                        if (e.Headers != null && e.Headers != '') {
+                            headers = e.Headers.replace('>', '&gt;');
+                            headers = headers.replace('<', '&lt;');
+                        }
+                        Map<Id,Map<String, Object>> emailAttachments = attachmentsMap.get(e.Id);
+                        System.debug('EMAIL ATTACHMENTS: ' + emailAttachments);
+                        String emailAttachmentsFiles = '[';
+                        if (emailAttachments != null && emailAttachments.size() > 0) {
+                            System.debug('EMAIL ATTACHMENTS SIZE: ' + emailAttachments.size());
+                            for (Map<String, Object> emailAttachment : emailAttachments.values()) {
+                                System.debug('EMAIL ATTACHMENT: ' + emailAttachment.get('fileName') + '.' + emailAttachment.get('fileExtension'));
+                                emailAttachmentsFiles += emailAttachment.get('fileName') + '.' + emailAttachment.get('fileExtension') + ', ';
+                            }
+                        }
+                        emailAttachmentsFiles = emailAttachmentsFiles.removeEnd(', ') + ']';
+                        String emailContent = '<strong>Email Id: ' + e.Id + '</strong><br>' + 
+                        '<em>Other Fields:</em><br>' +
+                        'Parent Id: ' + e.ParentId + '<br>' +
+                        'Activity Id: ' + e.ActivityId + '<br>' +
+                        'Created Date: ' + String.valueOf(e.CreatedDate) + '<br>' +
+                        'Created By Id: ' + e.CreatedById + '<br>' +
+                        // 'Created By Name: ' + e.CreatedBy.Name + '<br>' +
+                        'Last Modified Date: ' + String.valueOf(e.LastModifiedDate) + '<br>' +
+                        'Last Modified By Id: ' + e.LastModifiedById + '<br>' +
+                        // 'Last Modified By Name: ' + e.LastModifiedBy.Name + '<br>' +
+                        'System Modstamp: ' + String.valueOf(e.SystemModstamp) + '<br>' +
+                        // 'Text Body: ' + e.TextBody + '<br>' +
+                        // 'Html Body: ' + e.HtmlBody + '<br>' +
+                        // 'Subject: ' + e.Subject + '<br>' +
+                        'Name: ' + e.Name + '<br>' +
+                        // 'From Name: ' + e.FromName + '<br>' +
+                        // 'From Address: ' + e.FromAddress + '<br>' +
+                        'Validated From Address: ' + e.ValidatedFromAddress + '<br>' +
+                        // 'To Address: ' + e.ToAddress + '<br>' +
+                        // 'Cc Address: ' + e.CcAddress + '<br>' +
+                        // 'Bcc Address: ' + e.BccAddress + '<br>' +
+                        'Incoming: ' + e.Incoming + '<br>' +
+                        'Status: ' + e.Status + '<br>' +
+                        'Message Date: ' + String.valueOf(e.MessageDate) + '<br>' +
+                        'Is Deleted: ' + e.IsDeleted + '<br>' +
+                        'Reply To Email Message Id: ' + e.ReplyToEmailMessageId + '<br>' +
+                        'Is Externally Visible: ' + e.IsExternallyVisible + '<br>' +
+                        'Message Identifier: ' + e.MessageIdentifier + '<br>' +
+                        'Thread Identifier: ' + e.ThreadIdentifier + '<br>' +
+                        'Client Thread Identifier: ' + e.ClientThreadIdentifier + '<br>' +
+                        'Is Client Managed: ' + e.IsClientManaged + '<br>' +
+                        'Related To Id: ' + e.RelatedToId + '<br>' +
+                        'Is Tracked: ' + e.IsTracked + '<br>' +
+                        'Is Opened: ' + e.IsOpened + '<br>' +
+                        'First Opened Date: ' + String.valueOf(e.FirstOpenedDate) + '<br>' +
+                        'Last Opened Date: ' + String.valueOf(e.LastOpenedDate) + '<br>' +
+                        'Is Bounced: ' + e.IsBounced + '<br>' +
+                        'Email Template Id: ' + e.EmailTemplateId + '<br><br>' +
+                        '<strong>// DETAILS // </strong><br>' +
+                        'Headers: ' +  headers + '<br>' +
+                        'Has Attachment: ' + e.HasAttachment + '<br>' + 
                         'From: ' + e.FromName + ' [' + e.FromAddress + ']' + '<br>' + 
                         'Sent: ' + String.valueOf(e.MessageDate) + '<br>' + 
                         'To: ' + e.ToAddress + '<br>' +  
                         'Cc: ' + (e.CcAddress == null ? '' : e.CcAddress) + '<br>' + 
                         'Bcc: ' + (e.BccAddress == null ? '' : e.BccAddress) + '<br>' + 
-                        'Subject: ' + e.Subject + '<br><br>' + e.HtmlBody + '<br><br>';
+                        'Subject: ' + e.Subject + '<br><br>' + e.HtmlBody + '<br><br>' +
+                        'Attachments: ' + (emailAttachmentsFiles == null ? '' : emailAttachmentsFiles) + '<br><br>';
                         emailMessagesContent += emailContent;
                     }
                     Blob emailPdfBlob = Blob.toPdf(emailMessagesContent);
@@ -273,41 +349,56 @@ public with sharing class CasesArchiveToBox {
         // deleteCase(caseId);
     }
 
-    private static String getOrCreateFolder(String parentId, String folderName) {
-        // Check if folder exists
-        HttpResponse res = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders/' + parentId + '/items', 'method' => 'GET', 'attributes' => null, 'body' => null, 'fileName' => null}, null);
-    
-        if (res.getStatusCode() == 200) {
-            // Parse the JSON response
-            Map<String, Object> jsonResponse = (Map<String, Object>) JSON.deserializeUntyped(res.getBody());
-    
-            List<Object> entries = (List<Object>) jsonResponse.get('entries');
-    
-            for (Object entryObj : entries) {
-                Map<String, Object> entry = (Map<String, Object>) entryObj;
-                String type = (String) entry.get('type');
-                String name = (String) entry.get('name');
-                String id = (String) entry.get('id');
-    
-                if (type == 'folder' && name == folderName) {
-                    // Folder exists, return the folder ID
-                    return id;
+    private static String getOrCreateFolder(String parentId, String folderName, Boolean parentCreatedNow) {
+        if (!parentCreatedNow) {
+            System.debug('NOT CREATED NOW: ' + folderName + ' for parentId: ' + parentId);
+            // Check if folder exists
+            HttpResponse res = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders/' + parentId + '/items', 'method' => 'GET', 'attributes' => null, 'body' => null, 'fileName' => null}, null);
+        
+            if (res.getStatusCode() == 200) {
+                // Parse the JSON response
+                Map<String, Object> jsonResponse = (Map<String, Object>) JSON.deserializeUntyped(res.getBody());
+        
+                List<Object> entries = (List<Object>) jsonResponse.get('entries');
+        
+                for (Object entryObj : entries) {
+                    Map<String, Object> entry = (Map<String, Object>) entryObj;
+                    String type = (String) entry.get('type');
+                    String name = (String) entry.get('name');
+                    String id = (String) entry.get('id');
+        
+                    if (type == 'folder' && name == folderName) {
+                        // Folder exists, return the folder ID
+                        return id;
+                    }
                 }
             }
+        
+            // folder does not exist, so create it
+            String folderBody = '{"name":"' + folderName + '", "parent": {"id":"' + parentId + '"}}';
+            HttpResponse createRes = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders', 'method' => 'POST', 'attributes' => null, 'body' => folderBody, 'fileName' => null}, null);
+            if (createRes.getStatusCode() == 201) {
+                // Parse JSON response to get new folder ID
+                Map<String, Object> createResponse = (Map<String, Object>) JSON.deserializeUntyped(createRes.getBody());
+                String newFolderId = (String) createResponse.get('id');
+        
+                // Return new folder ID and indicate new folder was created to prevent unnecessary 'GET' for subfolders 
+                return newFolderId + '-' + 'new';
+            }
+        } else {
+            System.debug('CREATED NOW: ' + folderName + ' for parentId: ' + parentId);
+            // folder does not exist, so create it
+            String folderBody = '{"name":"' + folderName + '", "parent": {"id":"' + parentId + '"}}';
+            HttpResponse createRes = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders', 'method' => 'POST', 'attributes' => null, 'body' => folderBody, 'fileName' => null}, null);
+            if (createRes.getStatusCode() == 201) {
+                // Parse JSON response to get new folder ID
+                Map<String, Object> createResponse = (Map<String, Object>) JSON.deserializeUntyped(createRes.getBody());
+                String newFolderId = (String) createResponse.get('id');
+        
+                // Return new folder ID
+                return newFolderId;
+            }
         }
-    
-        // folder does not exist, so create it
-        String folderBody = '{"name":"' + folderName + '", "parent": {"id":"' + parentId + '"}}';
-        HttpResponse createRes = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders', 'method' => 'POST', 'attributes' => null, 'body' => folderBody, 'fileName' => null}, null);
-        if (createRes.getStatusCode() == 201) {
-            // Parse JSON response to get new folder ID
-            Map<String, Object> createResponse = (Map<String, Object>) JSON.deserializeUntyped(createRes.getBody());
-            String newFolderId = (String) createResponse.get('id');
-    
-            // Return new folder ID
-            return newFolderId;
-        }
-    
         return null; // Error condition
     }
     
