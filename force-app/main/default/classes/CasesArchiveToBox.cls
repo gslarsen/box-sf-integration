@@ -116,7 +116,7 @@ public with sharing class CasesArchiveToBox {
         }
 
         Map<Id, Map<Id, Map<String, Object>>> contentIdToData = new  Map<Id, Map<Id, Map<String, Object>>>();
-        for (ContentVersion cv : [SELECT ContentDocumentId, VersionData, Title, FileType, FileExtension FROM ContentVersion WHERE ContentDocumentId IN :contentDocumentIds]) {
+        for (ContentVersion cv : [SELECT ContentDocumentId, VersionData, Title, FileType, FileExtension FROM ContentVersion WHERE ContentDocumentId IN :contentDocumentIds AND IsLatest = true]) {
             Map<Id, Map<String, Object>> attachmentInfo = new Map<Id, Map<String, Object>>{
                 contentDocumentToEmailMap.get(cv.ContentDocumentId) => new Map<String, Object>{
                 'blob' => cv.VersionData,
@@ -167,6 +167,7 @@ public with sharing class CasesArchiveToBox {
         List<EmailMessage> emailMessages = (List<EmailMessage>) caseToEmailsAndAttachments.get(caseId)[1];
         List<Map<Id, Map<String, Object>>> attachments = (List<Map<Id, Map<String, Object>>>) caseToEmailsAndAttachments.get(caseId)[2];
         List<CaseComment> comments = (List<CaseComment>) caseToEmailsAndAttachments.get(caseId)[3];
+        Map<Id, Map<Id, Map<String, Object>>> attachmentsMap = new Map<Id, Map<Id, Map<String, Object>>>();
         String caseNumber = metadata.get('caseNumber');
         String accountId = metadata.get('accountId');
         String accountName = metadata.get('accountName');
@@ -177,7 +178,6 @@ public with sharing class CasesArchiveToBox {
         String folder = '';
         String casesFolder = '';
         String caseIdFolder = '';
-        Map<Id, Map<Id, Map<String, Object>>> attachmentsMap = new Map<Id, Map<Id, Map<String, Object>>>();
 
         if (type == 'Accounts') {
             parent = ACCOUNTS_FOLDER;
@@ -222,67 +222,72 @@ public with sharing class CasesArchiveToBox {
 
                     // Access EmailMessages
                     String emailMessagesContent = '';
+                    // REMOVE?
+                    List<String> emailMessagesContentEml = new List<String>();
 
                     for (EmailMessage e : emailMessages) {
                         // Id, ParentId, ActivityId, CreatedById, CreatedDate, LastModifiedDate, LastModifiedById, SystemModstamp, TextBody, HtmlBody, Headers, Subject, Name, FromName, FromAddress, ValidatedFromAddress, ToAddress, CcAddress, BccAddress, Incoming, HasAttachment, Status, MessageDate, IsDeleted, ReplyToEmailMessageId, IsExternallyVisible, MessageIdentifier, ThreadIdentifier, ClientThreadIdentifier, IsClientManaged, RelatedToId, IsTracked, IsOpened, FirstOpenedDate, LastOpenedDate, IsBounced, EmailTemplateId
-                        System.debug('HEADERS: ' + e.Headers);
                         String headers = '';
                         if (e.Headers != null && e.Headers != '') {
                             headers = e.Headers.replace('>', '&gt;');
                             headers = headers.replace('<', '&lt;');
                         }
+
                         Map<Id,Map<String, Object>> emailAttachments = attachmentsMap.get(e.Id);
-                        System.debug('EMAIL ATTACHMENTS: ' + emailAttachments);
+                        List<Map<String, Object>> emailAttachmentsList = new List<Map<String, Object>>();
                         String emailAttachmentsFiles = '[';
+                        
                         if (emailAttachments != null && emailAttachments.size() > 0) {
-                            System.debug('EMAIL ATTACHMENTS SIZE: ' + emailAttachments.size());
                             for (Map<String, Object> emailAttachment : emailAttachments.values()) {
-                                System.debug('EMAIL ATTACHMENT: ' + emailAttachment.get('fileName') + '.' + emailAttachment.get('fileExtension'));
                                 emailAttachmentsFiles += emailAttachment.get('fileName') + '.' + emailAttachment.get('fileExtension') + ', ';
-                            }
+                                Map<String, Object> singleAttachmentMap = new Map<String, Object>();
+                                singleAttachmentMap.put((String)emailAttachment.get('fileName') + '.' + emailAttachment.get('fileExtension'), emailAttachment.get('blob'));
+                                emailAttachmentsList.add(singleAttachmentMap);                            }
                         }
+
+                        System.debug('emailAttachmentsList: ' + emailAttachmentsList);
                         emailAttachmentsFiles = emailAttachmentsFiles.removeEnd(', ') + ']';
                         String emailContent = '<strong>Email Id: ' + e.Id + '</strong><br>' + 
-                        '<em>Other Fields:</em><br>' +
-                        'Parent Id: ' + e.ParentId + '<br>' +
-                        'Activity Id: ' + e.ActivityId + '<br>' +
-                        'Created Date: ' + String.valueOf(e.CreatedDate) + '<br>' +
-                        'Created By Id: ' + e.CreatedById + '<br>' +
-                        // 'Created By Name: ' + e.CreatedBy.Name + '<br>' +
-                        'Last Modified Date: ' + String.valueOf(e.LastModifiedDate) + '<br>' +
-                        'Last Modified By Id: ' + e.LastModifiedById + '<br>' +
-                        // 'Last Modified By Name: ' + e.LastModifiedBy.Name + '<br>' +
-                        'System Modstamp: ' + String.valueOf(e.SystemModstamp) + '<br>' +
-                        // 'Text Body: ' + e.TextBody + '<br>' +
-                        // 'Html Body: ' + e.HtmlBody + '<br>' +
-                        // 'Subject: ' + e.Subject + '<br>' +
-                        'Name: ' + e.Name + '<br>' +
+                        // '<em>Other Fields:</em><br>' +
+                        // 'Parent Id: ' + e.ParentId + '<br>' +
+                        // 'Activity Id: ' + e.ActivityId + '<br>' +
+                        // 'Created Date: ' + String.valueOf(e.CreatedDate) + '<br>' +
+                        // 'Created By Id: ' + e.CreatedById + '<br>' +
+                        // // 'Created By Name: ' + e.CreatedBy.Name + '<br>' +
+                        // 'Last Modified Date: ' + String.valueOf(e.LastModifiedDate) + '<br>' +
+                        // 'Last Modified By Id: ' + e.LastModifiedById + '<br>' +
+                        // // 'Last Modified By Name: ' + e.LastModifiedBy.Name + '<br>' +
+                        // 'System Modstamp: ' + String.valueOf(e.SystemModstamp) + '<br>' +
+                        // // 'Text Body: ' + e.TextBody + '<br>' +
+                        // // 'Html Body: ' + e.HtmlBody + '<br>' +
+                        // // 'Subject: ' + e.Subject + '<br>' +
+                        // 'Name: ' + e.Name + '<br>' +
                         // 'From Name: ' + e.FromName + '<br>' +
                         // 'From Address: ' + e.FromAddress + '<br>' +
-                        'Validated From Address: ' + e.ValidatedFromAddress + '<br>' +
+                        // 'Validated From Address: ' + e.ValidatedFromAddress + '<br>' +
                         // 'To Address: ' + e.ToAddress + '<br>' +
                         // 'Cc Address: ' + e.CcAddress + '<br>' +
                         // 'Bcc Address: ' + e.BccAddress + '<br>' +
-                        'Incoming: ' + e.Incoming + '<br>' +
-                        'Status: ' + e.Status + '<br>' +
-                        'Message Date: ' + String.valueOf(e.MessageDate) + '<br>' +
-                        'Is Deleted: ' + e.IsDeleted + '<br>' +
-                        'Reply To Email Message Id: ' + e.ReplyToEmailMessageId + '<br>' +
-                        'Is Externally Visible: ' + e.IsExternallyVisible + '<br>' +
-                        'Message Identifier: ' + e.MessageIdentifier + '<br>' +
-                        'Thread Identifier: ' + e.ThreadIdentifier + '<br>' +
-                        'Client Thread Identifier: ' + e.ClientThreadIdentifier + '<br>' +
-                        'Is Client Managed: ' + e.IsClientManaged + '<br>' +
-                        'Related To Id: ' + e.RelatedToId + '<br>' +
-                        'Is Tracked: ' + e.IsTracked + '<br>' +
-                        'Is Opened: ' + e.IsOpened + '<br>' +
-                        'First Opened Date: ' + String.valueOf(e.FirstOpenedDate) + '<br>' +
-                        'Last Opened Date: ' + String.valueOf(e.LastOpenedDate) + '<br>' +
-                        'Is Bounced: ' + e.IsBounced + '<br>' +
-                        'Email Template Id: ' + e.EmailTemplateId + '<br><br>' +
-                        '<strong>// DETAILS // </strong><br>' +
-                        'Headers: ' +  headers + '<br>' +
-                        'Has Attachment: ' + e.HasAttachment + '<br>' + 
+                        // 'Incoming: ' + e.Incoming + '<br>' +
+                        // 'Status: ' + e.Status + '<br>' +
+                        // 'Message Date: ' + String.valueOf(e.MessageDate) + '<br>' +
+                        // 'Is Deleted: ' + e.IsDeleted + '<br>' +
+                        // 'Reply To Email Message Id: ' + e.ReplyToEmailMessageId + '<br>' +
+                        // 'Is Externally Visible: ' + e.IsExternallyVisible + '<br>' +
+                        // 'Message Identifier: ' + e.MessageIdentifier + '<br>' +
+                        // 'Thread Identifier: ' + e.ThreadIdentifier + '<br>' +
+                        // 'Client Thread Identifier: ' + e.ClientThreadIdentifier + '<br>' +
+                        // 'Is Client Managed: ' + e.IsClientManaged + '<br>' +
+                        // 'Related To Id: ' + e.RelatedToId + '<br>' +
+                        // 'Is Tracked: ' + e.IsTracked + '<br>' +
+                        // 'Is Opened: ' + e.IsOpened + '<br>' +
+                        // 'First Opened Date: ' + String.valueOf(e.FirstOpenedDate) + '<br>' +
+                        // 'Last Opened Date: ' + String.valueOf(e.LastOpenedDate) + '<br>' +
+                        // 'Is Bounced: ' + e.IsBounced + '<br>' +
+                        // 'Email Template Id: ' + e.EmailTemplateId + '<br><br>' +
+                        // '<strong>// EMAIL // </strong><br>' +
+                        // 'Headers: ' +  headers + '<br>' +
+                        // 'Has Attachment: ' + e.HasAttachment + '<br>' + 
                         'From: ' + e.FromName + ' [' + e.FromAddress + ']' + '<br>' + 
                         'Sent: ' + String.valueOf(e.MessageDate) + '<br>' + 
                         'To: ' + e.ToAddress + '<br>' +  
@@ -291,7 +296,55 @@ public with sharing class CasesArchiveToBox {
                         'Subject: ' + e.Subject + '<br><br>' + e.HtmlBody + '<br><br>' +
                         'Attachments: ' + (emailAttachmentsFiles == null ? '' : emailAttachmentsFiles) + '<br><br>';
                         emailMessagesContent += emailContent;
+
+                        // REMOVE?
+                        String emailContentEml = 'From: ' + e.FromName + ' [' + e.FromAddress + ']' + '\n' + 
+                            'Sent: ' + String.valueOf(e.MessageDate) + '\n' + 
+                            'To: ' + e.ToAddress + '\n' +  
+                            'Cc: ' + (e.CcAddress == null ? '' : e.CcAddress) + '\n' + 
+                            'Bcc: ' + (e.BccAddress == null ? '' : e.BccAddress) + '\n' + 
+                            'Subject: ' + e.Subject + '\n' + 
+                            'MIME-Version: 1.0' + '\n' +
+                            'Content-Type: multipart/mixed; boundary="main_boundary"\n\n'; // + '\n' + //alternative
+                        
+                        // Body parts
+                        String body = '';
+                        body += '--main_boundary\n';
+                        body += 'Content-Type: multipart/alternative; boundary="alternative_boundary"\n\n';
+
+                        if (String.isNotEmpty(e.TextBody)) {
+                            body += '--alternative_boundary\n';
+                            body += 'Content-Type: text/plain; charset=UTF-8\n\n';
+                            body += e.TextBody + '\n\n';
+                        }
+
+                        body += '--alternative_boundary--\n\n';
+
+                        for (Map<String, Object> emailAttachment : emailAttachmentsList) {
+                            System.debug(emailAttachment);
+                            String attachmentFileName = new List<String>(emailAttachment.keySet())[0];
+                            Blob attachmentBlob = (Blob)emailAttachment.get(attachmentFileName);
+
+                            Map<String, Object> emailAttachmentMap = new Map<String, Object>{
+                                'blob' => attachmentBlob,
+                                'fileName' => attachmentFileName
+                            };
+                            
+                            body += '--main_boundary\n';
+                            body += 'Content-Type: application/octet-stream; name="' + attachmentFileName + '"\n';
+                            body += 'Content-Disposition: attachment; filename="' + attachmentFileName + '"\n';
+                            body += 'Content-Transfer-Encoding: base64\n\n';
+                            
+                            String base64Data = EncodingUtil.base64Encode(attachmentBlob);
+                            body += base64Data + '\n\n';                            
+                        }
+
+                        // End of the multipart/mixed section
+                        body += '--main_boundary--\n\n';    
+                        emailContentEml += body;                                           
+                        emailMessagesContentEml.add(emailContentEml);
                     }
+
                     Blob emailPdfBlob = Blob.toPdf(emailMessagesContent);
                     String emailPdfFileName = 'Emails.pdf';
 
@@ -304,6 +357,24 @@ public with sharing class CasesArchiveToBox {
 
                     // Upload the email details PDF to Box
                     uploadFileToBox(emailPdfAttachment, caseIdFolder);
+
+                    // REMOVE?
+                    for (Integer i=0; i < emailMessagesContentEml.size(); ++i) {
+                        String email = emailMessagesContentEml[i];
+                        System.debug('EMAIL EML: ' + email);
+                        Blob emailEmlBlob = Blob.valueOf(email);
+                        String emailEmlFileName = 'Email' + (i+1) + '.eml';
+                        
+                        // Create a Map to hold the eml Blob and its metadata
+                        Map<String, Object> emailEmlAttachment = new Map<String, Object>{
+                            'blob' => emailEmlBlob,
+                            'fileName' => emailEmlFileName,
+                            'fileType' => 'text/plain'
+                        };
+    
+                        // Upload the txt details PDF to Box
+                        uploadFileToBox(emailEmlAttachment, caseIdFolder);
+                    }
                     
                     // Create Case files & upload
                     String pdfContent = 'Case Number: ' + metadata.get('caseNumber') + '<br>' + 'Subject: ' + metadata.get('subject') + '<br>' +
@@ -351,7 +422,6 @@ public with sharing class CasesArchiveToBox {
 
     private static String getOrCreateFolder(String parentId, String folderName, Boolean parentCreatedNow) {
         if (!parentCreatedNow) {
-            System.debug('NOT CREATED NOW: ' + folderName + ' for parentId: ' + parentId);
             // Check if folder exists
             HttpResponse res = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders/' + parentId + '/items', 'method' => 'GET', 'attributes' => null, 'body' => null, 'fileName' => null}, null);
         

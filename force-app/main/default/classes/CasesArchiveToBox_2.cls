@@ -60,7 +60,7 @@ public with sharing class CasesArchiveToBox {
                         'suppliedPhone' => c.SuppliedPhone
                     },
                     new List<EmailMessage>(),
-                    new List<Map<String, Object>>(), // attachments
+                    new List<Map<Id, Map<String, Object>>>(), // attachments
                     new List<CaseComment>()
                 });                
             }
@@ -115,14 +115,15 @@ public with sharing class CasesArchiveToBox {
             contentDocumentToEmailMap.put(cdl.ContentDocumentId, cdl.LinkedEntityId);
         }
 
-        Map<Id, Map<String, Object>> contentIdToData = new Map<Id, Map<String, Object>>();
-        for (ContentVersion cv : [SELECT ContentDocumentId, VersionData, Title, FileType, FileExtension FROM ContentVersion WHERE ContentDocumentId IN :contentDocumentIds]) {
-            Map<String, Object> attachmentInfo = new Map<String, Object>{
+        Map<Id, Map<Id, Map<String, Object>>> contentIdToData = new  Map<Id, Map<Id, Map<String, Object>>>();
+        for (ContentVersion cv : [SELECT ContentDocumentId, VersionData, Title, FileType, FileExtension FROM ContentVersion WHERE ContentDocumentId IN :contentDocumentIds AND IsLatest = true]) {
+            Map<Id, Map<String, Object>> attachmentInfo = new Map<Id, Map<String, Object>>{
+                contentDocumentToEmailMap.get(cv.ContentDocumentId) => new Map<String, Object>{
                 'blob' => cv.VersionData,
                 'fileName' => cv.Title,
                 'fileType' => cv.FileType,
                 'fileExtension' => cv.FileExtension
-            };
+            }};
             contentIdToData.put(cv.ContentDocumentId, attachmentInfo);
         }       
 
@@ -133,9 +134,9 @@ public with sharing class CasesArchiveToBox {
             }
         
             if (caseToEmailsAndAttachments.containsKey(parentCaseId)) {
-                Map<String, Object> attachmentInfo = contentIdToData.get(cdl.ContentDocumentId);
+                Map<Id, Map<String, Object>> attachmentInfo = contentIdToData.get(cdl.ContentDocumentId);
                 if (attachmentInfo != null) {
-                    ((List<Map<String, Object>>)caseToEmailsAndAttachments.get(parentCaseId)[2]).add(attachmentInfo);
+                    ((List<Map<Id, Map<String, Object>>>)caseToEmailsAndAttachments.get(parentCaseId)[2]).add(attachmentInfo);
                 }
             }
         }        
@@ -164,8 +165,9 @@ public with sharing class CasesArchiveToBox {
         
         Map<String, String> metadata = (Map<String, String>) caseToEmailsAndAttachments.get(caseId)[0];
         List<EmailMessage> emailMessages = (List<EmailMessage>) caseToEmailsAndAttachments.get(caseId)[1];
-        List<Map<String, Object>> attachments = (List<Map<String, Object>>) caseToEmailsAndAttachments.get(caseId)[2];
+        List<Map<Id, Map<String, Object>>> attachments = (List<Map<Id, Map<String, Object>>>) caseToEmailsAndAttachments.get(caseId)[2];
         List<CaseComment> comments = (List<CaseComment>) caseToEmailsAndAttachments.get(caseId)[3];
+        Map<Id, Map<Id, Map<String, Object>>> attachmentsMap = new Map<Id, Map<Id, Map<String, Object>>>();
         String caseNumber = metadata.get('caseNumber');
         String accountId = metadata.get('accountId');
         String accountName = metadata.get('accountName');
@@ -200,11 +202,16 @@ public with sharing class CasesArchiveToBox {
                     caseIdFolder = caseIdFolder.replace('-new', '');
                     System.debug('caseIdFolder: ' + caseIdFolder);
                     // Access Blob data and Metadata
-                    for (Map<String, Object> attachment : attachments) {
-                        Blob contentData = (Blob)attachment.get('blob');
-                        String fileName = (String)attachment.get('fileName');
-                        String fileExtension = (String)attachment.get('fileExtension');
-                        
+                    for (Map<Id, Map<String, Object>> attachment : attachments) {
+                        Id firstKey = new List<Id>(attachment.keySet())[0];
+
+                        System.debug('ATTACHMENT: ' + firstKey);
+                        Blob contentData = (Blob)attachment.get(firstKey).get('blob');
+                        String fileName = (String)attachment.get(firstKey).get('fileName');
+                        String fileExtension = (String)attachment.get(firstKey).get('fileExtension');
+                        attachmentsMap.put(firstKey, attachment);
+                        System.debug('attachmentsMap: ' + attachmentsMap);
+
                         // Create a Map to hold the Blob and its metadata
                         Map<String, Object> blobAttachment = new Map<String, Object>{
                             'blob' => contentData,
@@ -215,16 +222,33 @@ public with sharing class CasesArchiveToBox {
 
                     // Access EmailMessages
                     String emailMessagesContent = '';
+                    // REMOVE?
+                    List<String> emailMessagesContentEml = new List<String>();
 
                     for (EmailMessage e : emailMessages) {
                         // Id, ParentId, ActivityId, CreatedById, CreatedDate, LastModifiedDate, LastModifiedById, SystemModstamp, TextBody, HtmlBody, Headers, Subject, Name, FromName, FromAddress, ValidatedFromAddress, ToAddress, CcAddress, BccAddress, Incoming, HasAttachment, Status, MessageDate, IsDeleted, ReplyToEmailMessageId, IsExternallyVisible, MessageIdentifier, ThreadIdentifier, ClientThreadIdentifier, IsClientManaged, RelatedToId, IsTracked, IsOpened, FirstOpenedDate, LastOpenedDate, IsBounced, EmailTemplateId
-                        System.debug('HEADERS: ' + e.Headers);
                         String headers = '';
                         if (e.Headers != null && e.Headers != '') {
                             headers = e.Headers.replace('>', '&gt;');
                             headers = headers.replace('<', '&lt;');
                         }
+
+                        Map<Id,Map<String, Object>> emailAttachments = attachmentsMap.get(e.Id);
+                        List<Map<String, Object>> emailAttachmentsList = new List<Map<String, Object>>();
+                        String emailAttachmentsFiles = '[';
+                        
+                        if (emailAttachments != null && emailAttachments.size() > 0) {
+                            for (Map<String, Object> emailAttachment : emailAttachments.values()) {
+                                emailAttachmentsFiles += emailAttachment.get('fileName') + '.' + emailAttachment.get('fileExtension') + ', ';
+                                Map<String, Object> singleAttachmentMap = new Map<String, Object>();
+                                singleAttachmentMap.put((String)emailAttachment.get('fileName') + '.' + emailAttachment.get('fileExtension'), emailAttachment.get('blob'));
+                                emailAttachmentsList.add(singleAttachmentMap);                            }
+                        }
+
+                        System.debug('emailAttachmentsList: ' + emailAttachmentsList);
+                        emailAttachmentsFiles = emailAttachmentsFiles.removeEnd(', ') + ']';
                         String emailContent = '<strong>Email Id: ' + e.Id + '</strong><br>' + 
+                        '<em>Other Fields:</em><br>' +
                         'Parent Id: ' + e.ParentId + '<br>' +
                         'Activity Id: ' + e.ActivityId + '<br>' +
                         'Created Date: ' + String.valueOf(e.CreatedDate) + '<br>' +
@@ -261,17 +285,54 @@ public with sharing class CasesArchiveToBox {
                         'Last Opened Date: ' + String.valueOf(e.LastOpenedDate) + '<br>' +
                         'Is Bounced: ' + e.IsBounced + '<br>' +
                         'Email Template Id: ' + e.EmailTemplateId + '<br><br>' +
-                        '<strong>// DETAILS // </strong><br>' +
+                        '<strong>// EMAIL // </strong><br>' +
                         'Headers: ' +  headers + '<br>' +
+                        'Has Attachment: ' + e.HasAttachment + '<br>' + 
                         'From: ' + e.FromName + ' [' + e.FromAddress + ']' + '<br>' + 
                         'Sent: ' + String.valueOf(e.MessageDate) + '<br>' + 
                         'To: ' + e.ToAddress + '<br>' +  
                         'Cc: ' + (e.CcAddress == null ? '' : e.CcAddress) + '<br>' + 
                         'Bcc: ' + (e.BccAddress == null ? '' : e.BccAddress) + '<br>' + 
                         'Subject: ' + e.Subject + '<br><br>' + e.HtmlBody + '<br><br>' +
-                        'Has Attachment: ' + e.HasAttachment + '<br><br>';
+                        'Attachments: ' + (emailAttachmentsFiles == null ? '' : emailAttachmentsFiles) + '<br><br>';
                         emailMessagesContent += emailContent;
+
+                        // REMOVE?
+                        String emailContentEml = 'From: ' + e.FromName + ' [' + e.FromAddress + ']' + '\n' + 
+                        'Sent: ' + String.valueOf(e.MessageDate) + '\n' + 
+                        'To: ' + e.ToAddress + '\n' +  
+                        'Cc: ' + (e.CcAddress == null ? '' : e.CcAddress) + '\n' + 
+                        'Bcc: ' + (e.BccAddress == null ? '' : e.BccAddress) + '\n' + 
+                        'Subject: ' + e.Subject + '\n' + 
+                        'MIME-Version: 1.0' + '\n' +
+                        'Content-Type: multipart/alternative; boundary="simple boundary"' + '\n' +
+                        '--simple boundary\n' + 
+                        'Content-Type: text/plain; charset=UTF-8\n\n' +
+                        e.TextBody + 
+                        (e.HasAttachment == true ? '\n\nAttachments: ' + emailAttachmentsFiles : '') + '\n';
+                        // '\n--simple boundary--';
+                        
+                        // for (Map<String, Object> emailAttachment : emailAttachmentsList) {
+                        //     System.debug(emailAttachment);
+                        //     String attachmentFileName = new List<String>(emailAttachment.keySet())[0];
+                        //     Blob attachmentBlob = (Blob)emailAttachment.get(attachmentFileName);
+                        //     Map<String, Object> emailAttachmentMap = new Map<String, Object>{
+                        //         'blob' => attachmentBlob,
+                        //         'fileName' => attachmentFileName
+                        //     };
+                            
+                        //     // uploadFileToBox(emailAttachmentMap, caseIdFolder);
+                        //     emailContentEml += '--main_boundary\n';
+                        //     emailContentEml += 'Content-Type: application/octet-stream; name="' + attachmentFileName + '"\n';
+                        //     emailContentEml += 'Content-Disposition: attachment; filename="' + attachmentFileName + '"\n';
+                        //     emailContentEml += 'Content-Transfer-Encoding: base64\n\n';
+                            
+                        //     String base64Data = EncodingUtil.base64Encode(attachmentBlob);
+                        //     emailContentEml += base64Data + '\n\n';                            
+                        // }
+                        emailMessagesContentEml.add(emailContentEml);
                     }
+
                     Blob emailPdfBlob = Blob.toPdf(emailMessagesContent);
                     String emailPdfFileName = 'Emails.pdf';
 
@@ -284,6 +345,24 @@ public with sharing class CasesArchiveToBox {
 
                     // Upload the email details PDF to Box
                     uploadFileToBox(emailPdfAttachment, caseIdFolder);
+
+                    // REMOVE?
+                    for (Integer i=0; i < emailMessagesContentEml.size(); ++i) {
+                        String email = emailMessagesContentEml[i];
+                        System.debug('EMAIL EML: ' + email);
+                        Blob emailEmlBlob = Blob.valueOf(email);
+                        String emailEmlFileName = 'Email' + (i+1) + '.eml';
+                        
+                        // Create a Map to hold the eml Blob and its metadata
+                        Map<String, Object> emailEmlAttachment = new Map<String, Object>{
+                            'blob' => emailEmlBlob,
+                            'fileName' => emailEmlFileName,
+                            'fileType' => 'text/plain'
+                        };
+    
+                        // Upload the txt details PDF to Box
+                        uploadFileToBox(emailEmlAttachment, caseIdFolder);
+                    }
                     
                     // Create Case files & upload
                     String pdfContent = 'Case Number: ' + metadata.get('caseNumber') + '<br>' + 'Subject: ' + metadata.get('subject') + '<br>' +
@@ -331,7 +410,6 @@ public with sharing class CasesArchiveToBox {
 
     private static String getOrCreateFolder(String parentId, String folderName, Boolean parentCreatedNow) {
         if (!parentCreatedNow) {
-            System.debug('NOT CREATED NOW: ' + folderName + ' for parentId: ' + parentId);
             // Check if folder exists
             HttpResponse res = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders/' + parentId + '/items', 'method' => 'GET', 'attributes' => null, 'body' => null, 'fileName' => null}, null);
         
