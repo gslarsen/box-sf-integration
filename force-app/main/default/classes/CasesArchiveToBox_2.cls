@@ -248,46 +248,46 @@ public with sharing class CasesArchiveToBox {
                         System.debug('emailAttachmentsList: ' + emailAttachmentsList);
                         emailAttachmentsFiles = emailAttachmentsFiles.removeEnd(', ') + ']';
                         String emailContent = '<strong>Email Id: ' + e.Id + '</strong><br>' + 
-                        '<em>Other Fields:</em><br>' +
-                        'Parent Id: ' + e.ParentId + '<br>' +
-                        'Activity Id: ' + e.ActivityId + '<br>' +
-                        'Created Date: ' + String.valueOf(e.CreatedDate) + '<br>' +
-                        'Created By Id: ' + e.CreatedById + '<br>' +
-                        // 'Created By Name: ' + e.CreatedBy.Name + '<br>' +
-                        'Last Modified Date: ' + String.valueOf(e.LastModifiedDate) + '<br>' +
-                        'Last Modified By Id: ' + e.LastModifiedById + '<br>' +
-                        // 'Last Modified By Name: ' + e.LastModifiedBy.Name + '<br>' +
-                        'System Modstamp: ' + String.valueOf(e.SystemModstamp) + '<br>' +
-                        // 'Text Body: ' + e.TextBody + '<br>' +
-                        // 'Html Body: ' + e.HtmlBody + '<br>' +
-                        // 'Subject: ' + e.Subject + '<br>' +
-                        'Name: ' + e.Name + '<br>' +
+                        // '<em>Other Fields:</em><br>' +
+                        // 'Parent Id: ' + e.ParentId + '<br>' +
+                        // 'Activity Id: ' + e.ActivityId + '<br>' +
+                        // 'Created Date: ' + String.valueOf(e.CreatedDate) + '<br>' +
+                        // 'Created By Id: ' + e.CreatedById + '<br>' +
+                        // // 'Created By Name: ' + e.CreatedBy.Name + '<br>' +
+                        // 'Last Modified Date: ' + String.valueOf(e.LastModifiedDate) + '<br>' +
+                        // 'Last Modified By Id: ' + e.LastModifiedById + '<br>' +
+                        // // 'Last Modified By Name: ' + e.LastModifiedBy.Name + '<br>' +
+                        // 'System Modstamp: ' + String.valueOf(e.SystemModstamp) + '<br>' +
+                        // // 'Text Body: ' + e.TextBody + '<br>' +
+                        // // 'Html Body: ' + e.HtmlBody + '<br>' +
+                        // // 'Subject: ' + e.Subject + '<br>' +
+                        // 'Name: ' + e.Name + '<br>' +
                         // 'From Name: ' + e.FromName + '<br>' +
                         // 'From Address: ' + e.FromAddress + '<br>' +
-                        'Validated From Address: ' + e.ValidatedFromAddress + '<br>' +
+                        // 'Validated From Address: ' + e.ValidatedFromAddress + '<br>' +
                         // 'To Address: ' + e.ToAddress + '<br>' +
                         // 'Cc Address: ' + e.CcAddress + '<br>' +
                         // 'Bcc Address: ' + e.BccAddress + '<br>' +
-                        'Incoming: ' + e.Incoming + '<br>' +
-                        'Status: ' + e.Status + '<br>' +
-                        'Message Date: ' + String.valueOf(e.MessageDate) + '<br>' +
-                        'Is Deleted: ' + e.IsDeleted + '<br>' +
-                        'Reply To Email Message Id: ' + e.ReplyToEmailMessageId + '<br>' +
-                        'Is Externally Visible: ' + e.IsExternallyVisible + '<br>' +
-                        'Message Identifier: ' + e.MessageIdentifier + '<br>' +
-                        'Thread Identifier: ' + e.ThreadIdentifier + '<br>' +
-                        'Client Thread Identifier: ' + e.ClientThreadIdentifier + '<br>' +
-                        'Is Client Managed: ' + e.IsClientManaged + '<br>' +
-                        'Related To Id: ' + e.RelatedToId + '<br>' +
-                        'Is Tracked: ' + e.IsTracked + '<br>' +
-                        'Is Opened: ' + e.IsOpened + '<br>' +
-                        'First Opened Date: ' + String.valueOf(e.FirstOpenedDate) + '<br>' +
-                        'Last Opened Date: ' + String.valueOf(e.LastOpenedDate) + '<br>' +
-                        'Is Bounced: ' + e.IsBounced + '<br>' +
-                        'Email Template Id: ' + e.EmailTemplateId + '<br><br>' +
-                        '<strong>// EMAIL // </strong><br>' +
-                        'Headers: ' +  headers + '<br>' +
-                        'Has Attachment: ' + e.HasAttachment + '<br>' + 
+                        // 'Incoming: ' + e.Incoming + '<br>' +
+                        // 'Status: ' + e.Status + '<br>' +
+                        // 'Message Date: ' + String.valueOf(e.MessageDate) + '<br>' +
+                        // 'Is Deleted: ' + e.IsDeleted + '<br>' +
+                        // 'Reply To Email Message Id: ' + e.ReplyToEmailMessageId + '<br>' +
+                        // 'Is Externally Visible: ' + e.IsExternallyVisible + '<br>' +
+                        // 'Message Identifier: ' + e.MessageIdentifier + '<br>' +
+                        // 'Thread Identifier: ' + e.ThreadIdentifier + '<br>' +
+                        // 'Client Thread Identifier: ' + e.ClientThreadIdentifier + '<br>' +
+                        // 'Is Client Managed: ' + e.IsClientManaged + '<br>' +
+                        // 'Related To Id: ' + e.RelatedToId + '<br>' +
+                        // 'Is Tracked: ' + e.IsTracked + '<br>' +
+                        // 'Is Opened: ' + e.IsOpened + '<br>' +
+                        // 'First Opened Date: ' + String.valueOf(e.FirstOpenedDate) + '<br>' +
+                        // 'Last Opened Date: ' + String.valueOf(e.LastOpenedDate) + '<br>' +
+                        // 'Is Bounced: ' + e.IsBounced + '<br>' +
+                        // 'Email Template Id: ' + e.EmailTemplateId + '<br><br>' +
+                        // '<strong>// EMAIL // </strong><br>' +
+                        // 'Headers: ' +  headers + '<br>' +
+                        // 'Has Attachment: ' + e.HasAttachment + '<br>' + 
                         'From: ' + e.FromName + ' [' + e.FromAddress + ']' + '<br>' + 
                         'Sent: ' + String.valueOf(e.MessageDate) + '<br>' + 
                         'To: ' + e.ToAddress + '<br>' +  
@@ -299,37 +299,49 @@ public with sharing class CasesArchiveToBox {
 
                         // REMOVE?
                         String emailContentEml = 'From: ' + e.FromName + ' [' + e.FromAddress + ']' + '\n' + 
-                        'Sent: ' + String.valueOf(e.MessageDate) + '\n' + 
-                        'To: ' + e.ToAddress + '\n' +  
-                        'Cc: ' + (e.CcAddress == null ? '' : e.CcAddress) + '\n' + 
-                        'Bcc: ' + (e.BccAddress == null ? '' : e.BccAddress) + '\n' + 
-                        'Subject: ' + e.Subject + '\n' + 
-                        'MIME-Version: 1.0' + '\n' +
-                        'Content-Type: multipart/alternative; boundary="simple boundary"' + '\n' +
-                        '--simple boundary\n' + 
-                        'Content-Type: text/plain; charset=UTF-8\n\n' +
-                        e.TextBody + 
-                        (e.HasAttachment == true ? '\n\nAttachments: ' + emailAttachmentsFiles : '') + '\n';
-                        // '\n--simple boundary--';
+                            'Sent: ' + String.valueOf(e.MessageDate) + '\n' + 
+                            'To: ' + e.ToAddress + '\n' +  
+                            'Cc: ' + (e.CcAddress == null ? '' : e.CcAddress) + '\n' + 
+                            'Bcc: ' + (e.BccAddress == null ? '' : e.BccAddress) + '\n' + 
+                            'Subject: ' + e.Subject + '\n' + 
+                            'MIME-Version: 1.0' + '\n' +
+                            'Content-Type: multipart/mixed; boundary="main_boundary"\n\n'; // + '\n' + //alternative
                         
-                        // for (Map<String, Object> emailAttachment : emailAttachmentsList) {
-                        //     System.debug(emailAttachment);
-                        //     String attachmentFileName = new List<String>(emailAttachment.keySet())[0];
-                        //     Blob attachmentBlob = (Blob)emailAttachment.get(attachmentFileName);
-                        //     Map<String, Object> emailAttachmentMap = new Map<String, Object>{
-                        //         'blob' => attachmentBlob,
-                        //         'fileName' => attachmentFileName
-                        //     };
+                        // Body parts
+                        String body = '';
+                        body += '--main_boundary\n';
+                        body += 'Content-Type: multipart/alternative; boundary="alternative_boundary"\n\n';
+
+                        if (String.isNotEmpty(e.TextBody)) {
+                            body += '--alternative_boundary\n';
+                            body += 'Content-Type: text/plain; charset=UTF-8\n\n';
+                            body += e.TextBody + '\n\n';
+                        }
+
+                        body += '--alternative_boundary--\n\n';
+
+                        for (Map<String, Object> emailAttachment : emailAttachmentsList) {
+                            System.debug(emailAttachment);
+                            String attachmentFileName = new List<String>(emailAttachment.keySet())[0];
+                            Blob attachmentBlob = (Blob)emailAttachment.get(attachmentFileName);
+
+                            Map<String, Object> emailAttachmentMap = new Map<String, Object>{
+                                'blob' => attachmentBlob,
+                                'fileName' => attachmentFileName
+                            };
                             
-                        //     // uploadFileToBox(emailAttachmentMap, caseIdFolder);
-                        //     emailContentEml += '--main_boundary\n';
-                        //     emailContentEml += 'Content-Type: application/octet-stream; name="' + attachmentFileName + '"\n';
-                        //     emailContentEml += 'Content-Disposition: attachment; filename="' + attachmentFileName + '"\n';
-                        //     emailContentEml += 'Content-Transfer-Encoding: base64\n\n';
+                            body += '--main_boundary\n';
+                            body += 'Content-Type: application/octet-stream; name="' + attachmentFileName + '"\n';
+                            body += 'Content-Disposition: attachment; filename="' + attachmentFileName + '"\n';
+                            body += 'Content-Transfer-Encoding: base64\n\n';
                             
-                        //     String base64Data = EncodingUtil.base64Encode(attachmentBlob);
-                        //     emailContentEml += base64Data + '\n\n';                            
-                        // }
+                            String base64Data = EncodingUtil.base64Encode(attachmentBlob);
+                            body += base64Data + '\n\n';                            
+                        }
+
+                        // End of the multipart/mixed section
+                        body += '--main_boundary--\n\n';    
+                        emailContentEml += body;                                           
                         emailMessagesContentEml.add(emailContentEml);
                     }
 
