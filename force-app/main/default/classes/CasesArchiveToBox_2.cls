@@ -372,7 +372,7 @@ public with sharing class CasesArchiveToBox {
                             'fileType' => 'text/plain'
                         };
     
-                        // Upload the txt details PDF to Box
+                        // Upload the .eml to Box
                         uploadFileToBox(emailEmlAttachment, caseIdFolder);
                     }
                     
