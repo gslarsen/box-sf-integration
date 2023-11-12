@@ -177,7 +177,6 @@ public with sharing class CasesArchiveToBox {
         String contactName = metadata.get('contactName');
         String parent = '';
         String id = '';
-        String folder = '';
         String casesFolder = '';
         String caseIdFolder = '';
 
@@ -189,15 +188,16 @@ public with sharing class CasesArchiveToBox {
             id = contactId;
         }
 
+        // parentCreatedNow and '-new' in accountOrContactFolder is to prevent unnecessary 'GET' for subfolders 
         Boolean parentCreatedNow = false;
-        folder = getOrCreateFolder(parent, id, parentCreatedNow);
-        if (folder != null && folder != '' & folder.contains('-new')) {
+        String accountOrContactFolder = getOrCreateFolder(parent, id, parentCreatedNow);
+        if (accountOrContactFolder != null && accountOrContactFolder != '' & accountOrContactFolder.contains('-new')) {
             parentCreatedNow = true;
-            folder = folder.replace('-new', '');
+            accountOrContactFolder = accountOrContactFolder.replace('-new', '');
         } 
 
-        if (folder != null && folder != '') {
-            casesFolder = getOrCreateFolder(folder, 'Cases', parentCreatedNow);
+        if (accountOrContactFolder != null && accountOrContactFolder != '') {
+            casesFolder = getOrCreateFolder(accountOrContactFolder, 'Cases', parentCreatedNow);
             if (casesFolder != null && casesFolder != '') {
                 caseIdFolder = getOrCreateFolder(casesFolder, caseId + '-' + caseNumber, true);
                 if (caseIdFolder != null && caseIdFolder != '') {
