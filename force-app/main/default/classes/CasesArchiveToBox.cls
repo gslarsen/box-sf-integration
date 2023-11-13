@@ -13,13 +13,13 @@ public with sharing class CasesArchiveToBox {
         }
         
         List<Id> caseIds = new List<Id>(caseToEmailsAndAttachments.keySet());
-        Map<Id, Id> emailToCaseMap = new Map<Id, Id>();
-        List<Id> emailIdsWithAttachments = fetchEmails(caseIds, emailToCaseMap);
+        Map<Id, Id> emailIdToCaseId = new Map<Id, Id>();
+        List<Id> emailIdsWithAttachments = fetchEmails(caseIds, emailIdToCaseId);
         List<Id> combinedIds = new List<Id>();
         combinedIds.addAll(caseIds);
         combinedIds.addAll(emailIdsWithAttachments);
         
-        fetchAttachments(combinedIds, emailToCaseMap, emailIdsWithAttachments);
+        fetchAttachments(combinedIds, emailIdToCaseId, emailIdsWithAttachments);
         fetchComments(caseIds);
         sendToBox();
     }
@@ -70,20 +70,20 @@ public with sharing class CasesArchiveToBox {
     }
 
     // Email Messages related to Cases
-    private static List<String> fetchEmails(List<Id> caseIds, Map<Id, Id> emailToCaseMap) {
+    private static List<String> fetchEmails(List<Id> caseIds, Map<Id, Id> emailIdToCaseId) {
         List<String> emailIdsWithAttachments = new List<String>();
         if (Schema.sObjectType.EmailMessage.isAccessible()) {
             for (EmailMessage e : [SELECT Id, ParentId, ActivityId, CreatedById, CreatedDate, LastModifiedDate, LastModifiedById, SystemModstamp, TextBody, HtmlBody, Headers, Subject, Name, FromName, FromAddress, ValidatedFromAddress, ToAddress, CcAddress, BccAddress, Incoming, HasAttachment, Status, MessageDate, IsDeleted, ReplyToEmailMessageId, IsExternallyVisible, MessageIdentifier, ThreadIdentifier, ClientThreadIdentifier, IsClientManaged, RelatedToId, IsTracked, IsOpened, FirstOpenedDate, LastOpenedDate, IsBounced, EmailTemplateId FROM EmailMessage WHERE ParentId IN :caseIds]) {
                 if (caseToEmailsAndAttachments.containsKey(e.ParentId)) {
                     ((List<EmailMessage>)caseToEmailsAndAttachments.get(e.ParentId)[1]).add(e);
-                    emailToCaseMap.put(e.Id, e.ParentId);
+                    emailIdToCaseId.put(e.Id, e.ParentId);
                 }
                 if (e.HasAttachment) {
                     emailIdsWithAttachments.add(e.Id);
                 }
             }
         } else { 
-            System.debug('Case is not accessible');
+            System.debug('EmailMessage is not accessible');
         }
         return emailIdsWithAttachments;
     }
@@ -97,51 +97,52 @@ public with sharing class CasesArchiveToBox {
                 }
             }
         } else { 
-            System.debug('Case is not accessible');
+            System.debug('CaseComment is not accessible');
         }
     }
 
     // Attachments related to Cases and Emails
-    private static void fetchAttachments(List<Id> combinedIds, Map<Id, Id> emailToCaseMap, List<Id> emailIdsWithAttachments) {
+    private static void fetchAttachments(List<Id> combinedIds, Map<Id, Id> emailIdToCaseId, List<Id> emailIdsWithAttachments) {
         if (!Schema.sObjectType.ContentDocumentLink.isAccessible() || !Schema.sObjectType.ContentVersion.isAccessible()) {
             System.debug('ContentDocumentLink or ContentVersion is not accessible');
             return;
         }
         List<ContentDocumentLink> contentDocumentLinks = [SELECT ContentDocumentId, LinkedEntityId FROM ContentDocumentLink WHERE LinkedEntityId IN :combinedIds];
         List<Id> contentDocumentIds = new List<Id>();
-        Map<Id, Id> contentDocumentToLinkedEntity = new Map<Id, Id>();
+        Map<Id, Id> docIdToLinkedEntity = new Map<Id, Id>();
         for (ContentDocumentLink cdl : contentDocumentLinks) {
             contentDocumentIds.add(cdl.ContentDocumentId);
-            contentDocumentToLinkedEntity.put(cdl.ContentDocumentId, cdl.LinkedEntityId);
+            docIdToLinkedEntity.put(cdl.ContentDocumentId, cdl.LinkedEntityId);
         }
 
-        Map<Id, Map<Id, Map<String, Object>>> contentIdToData = new  Map<Id, Map<Id, Map<String, Object>>>();
+        Map<Id, Map<Id, Map<String, Object>>> docIdToAttachment = new  Map<Id, Map<Id, Map<String, Object>>>();
         for (ContentVersion cv : [SELECT ContentDocumentId, VersionData, Title, FileType, FileExtension FROM ContentVersion WHERE ContentDocumentId IN :contentDocumentIds AND IsLatest = true]) {
-            // attachmentInfo holds map of linkedEntityId to map of attachment metadata
-            Map<Id, Map<String, Object>> attachmentInfo = new Map<Id, Map<String, Object>>{
-                contentDocumentToLinkedEntity.get(cv.ContentDocumentId) => new Map<String, Object>{
+            Id linkedEntityId = docIdToLinkedEntity.get(cv.ContentDocumentId);
+            Map<Id, Map<String, Object>> linkedEntityIdToAttachment = new Map<Id, Map<String, Object>>{
+                linkedEntityId => new Map<String, Object>{
                 'blob' => cv.VersionData,
                 'fileName' => cv.Title,
                 'fileType' => cv.FileType,
                 'fileExtension' => cv.FileExtension,
-                'emailSource' => emailIdsWithAttachments.contains(contentDocumentToLinkedEntity.get(cv.ContentDocumentId))
+                'emailSource' => emailIdsWithAttachments.contains(linkedEntityId)
             }};
-            contentIdToData.put(cv.ContentDocumentId, attachmentInfo);
+            docIdToAttachment.put(cv.ContentDocumentId, linkedEntityIdToAttachment);
         }       
 
         for (ContentDocumentLink cdl : contentDocumentLinks) {
-            Id parentCaseId = cdl.LinkedEntityId;
-            if(emailToCaseMap.containsKey(parentCaseId)) {
-                parentCaseId = emailToCaseMap.get(parentCaseId);
+            Id linkedEntityId = cdl.LinkedEntityId;
+            if(emailIdToCaseId.containsKey(linkedEntityId)) {
+                // If the linked entity is an email, get the case ID from the email ID
+                linkedEntityId = emailIdToCaseId.get(linkedEntityId);
             }
         
-            if (caseToEmailsAndAttachments.containsKey(parentCaseId)) {
-                Map<Id, Map<String, Object>> attachmentInfo = contentIdToData.get(cdl.ContentDocumentId);
-                if (attachmentInfo != null) {
-                    ((List<Map<Id, Map<String, Object>>>)caseToEmailsAndAttachments.get(parentCaseId)[2]).add(attachmentInfo);
+            if (caseToEmailsAndAttachments.containsKey(linkedEntityId)) {
+                Map<Id, Map<String, Object>> linkedEntityIdToAttachment = docIdToAttachment.get(cdl.ContentDocumentId);
+                if (linkedEntityIdToAttachment != null) {
+                    ((List<Map<Id, Map<String, Object>>>)caseToEmailsAndAttachments.get(linkedEntityId)[2]).add(linkedEntityIdToAttachment);
                 }
             }
-        }        
+        }  
     }
 
     private static void sendToBox() {
@@ -203,16 +204,20 @@ public with sharing class CasesArchiveToBox {
                 if (caseIdFolder != null && caseIdFolder != '') {
                     caseIdFolder = caseIdFolder.replace('-new', '');
                     System.debug('caseIdFolder: ' + caseIdFolder);
-                    // Access Attachment Blob data and Metadata
+                    // access attachment Blob and its metadata
                     for (Map<Id, Map<String, Object>> attachment : attachments) {
-                        Id firstKey = new List<Id>(attachment.keySet())[0];
-
-                        System.debug('ATTACHMENT: ' + firstKey);
-                        Blob contentData = (Blob)attachment.get(firstKey).get('blob');
-                        String fileName = (String)attachment.get(firstKey).get('fileName');
-                        String fileExtension = (String)attachment.get(firstKey).get('fileExtension');
-                        attachmentsMap.put(firstKey, attachment);
-                        System.debug('attachmentsMap: ' + attachmentsMap);
+                        Id linkedEntityId = new List<Id>(attachment.keySet())[0];
+                        Boolean emailSource = (Boolean)attachment.get(linkedEntityId).get('emailSource');
+                        if (emailSource) {
+                            // we handle email attachments separately by attaching to .eml files
+                            continue;
+                        }
+                        
+                        Blob contentData = (Blob)attachment.get(linkedEntityId).get('blob');
+                        String fileName = (String)attachment.get(linkedEntityId).get('fileName');
+                        String fileExtension = (String)attachment.get(linkedEntityId).get('fileExtension');
+                        
+                        attachmentsMap.put(linkedEntityId, attachment);
                         
                         // Create a Map to hold the Blob and its metadata
                         Map<String, Object> blobAttachment = new Map<String, Object>{
@@ -220,18 +225,12 @@ public with sharing class CasesArchiveToBox {
                             'fileName' => fileName + '.' + fileExtension
                         }; 
 
-                        Boolean emailSource = (Boolean)attachment.get(firstKey).get('emailSource');
-                        if (emailSource) {
-                            continue;
-                        } else {
-                            // Upload the attachment to Box
-                            uploadFileToBox(blobAttachment, caseIdFolder);
-                        }
+                        uploadFileToBox(blobAttachment, caseIdFolder);
                     }
 
                     // Access EmailMessages
                     String emailMessagesContent = '';
-                    // REMOVE .eml files
+                    // REMOVE? .eml files
                     List<String> emailMessagesContentEml = new List<String>();
 
                     for (EmailMessage e : emailMessages) {
@@ -306,7 +305,7 @@ public with sharing class CasesArchiveToBox {
                         // 'Attachments: ' + (emailAttachmentsFiles == null ? '' : emailAttachmentsFiles) + '<br><br>';
                         // emailMessagesContent += emailContent;
 
-                        // REMOVE .eml files preparation
+                        // REMOVE? .eml files preparation
                         String emailContentEml = 'From: ' + e.FromName + ' [' + e.FromAddress + ']' + '\n' + 
                             'Sent: ' + String.valueOf(e.MessageDate) + '\n' + 
                             'To: ' + e.ToAddress + '\n' +  
