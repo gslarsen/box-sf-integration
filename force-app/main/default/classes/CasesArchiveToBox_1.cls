@@ -13,13 +13,13 @@ public with sharing class CasesArchiveToBox {
         }
         
         List<Id> caseIds = new List<Id>(caseToEmailsAndAttachments.keySet());
-        Map<Id, Id> emailToCaseMap = new Map<Id, Id>();
-        List<Id> emailIdsWithAttachments = fetchEmails(caseIds, emailToCaseMap);
+        Map<Id, Id> emailIdToCaseId = new Map<Id, Id>();
+        List<Id> emailIdsWithAttachments = fetchEmails(caseIds, emailIdToCaseId);
         List<Id> combinedIds = new List<Id>();
         combinedIds.addAll(caseIds);
         combinedIds.addAll(emailIdsWithAttachments);
         
-        fetchAttachments(combinedIds, emailToCaseMap, emailIdsWithAttachments);
+        fetchAttachments(combinedIds, emailIdToCaseId, emailIdsWithAttachments);
         fetchComments(caseIds);
         sendToBox();
     }
@@ -60,7 +60,8 @@ public with sharing class CasesArchiveToBox {
                         'suppliedPhone' => c.SuppliedPhone
                     },
                     new List<EmailMessage>(),
-                    new List<Map<Id, Map<String, Object>>>(), // attachments
+                    new Map<String, List<Map<Id,Map<String,Object>>>>{'email' => new List<Map<Id,Map<String,Object>>>(), 'case' => new List<Map<Id,Map<String,Object>>>()}, // attachments
+                    // new List<Map<Id, Map<String, Object>>>(), // attachments
                     new List<CaseComment>()
                 });                
             }
@@ -70,20 +71,20 @@ public with sharing class CasesArchiveToBox {
     }
 
     // Email Messages related to Cases
-    private static List<String> fetchEmails(List<Id> caseIds, Map<Id, Id> emailToCaseMap) {
+    private static List<String> fetchEmails(List<Id> caseIds, Map<Id, Id> emailIdToCaseId) {
         List<String> emailIdsWithAttachments = new List<String>();
         if (Schema.sObjectType.EmailMessage.isAccessible()) {
             for (EmailMessage e : [SELECT Id, ParentId, ActivityId, CreatedById, CreatedDate, LastModifiedDate, LastModifiedById, SystemModstamp, TextBody, HtmlBody, Headers, Subject, Name, FromName, FromAddress, ValidatedFromAddress, ToAddress, CcAddress, BccAddress, Incoming, HasAttachment, Status, MessageDate, IsDeleted, ReplyToEmailMessageId, IsExternallyVisible, MessageIdentifier, ThreadIdentifier, ClientThreadIdentifier, IsClientManaged, RelatedToId, IsTracked, IsOpened, FirstOpenedDate, LastOpenedDate, IsBounced, EmailTemplateId FROM EmailMessage WHERE ParentId IN :caseIds]) {
                 if (caseToEmailsAndAttachments.containsKey(e.ParentId)) {
                     ((List<EmailMessage>)caseToEmailsAndAttachments.get(e.ParentId)[1]).add(e);
-                    emailToCaseMap.put(e.Id, e.ParentId);
+                    emailIdToCaseId.put(e.Id, e.ParentId);
                 }
                 if (e.HasAttachment) {
                     emailIdsWithAttachments.add(e.Id);
                 }
             }
         } else { 
-            System.debug('Case is not accessible');
+            System.debug('EmailMessage is not accessible');
         }
         return emailIdsWithAttachments;
     }
@@ -97,51 +98,58 @@ public with sharing class CasesArchiveToBox {
                 }
             }
         } else { 
-            System.debug('Case is not accessible');
+            System.debug('CaseComment is not accessible');
         }
     }
 
     // Attachments related to Cases and Emails
-    private static void fetchAttachments(List<Id> combinedIds, Map<Id, Id> emailToCaseMap, List<Id> emailIdsWithAttachments) {
+    private static void fetchAttachments(List<Id> combinedIds, Map<Id, Id> emailIdToCaseId, List<Id> emailIdsWithAttachments) {
         if (!Schema.sObjectType.ContentDocumentLink.isAccessible() || !Schema.sObjectType.ContentVersion.isAccessible()) {
             System.debug('ContentDocumentLink or ContentVersion is not accessible');
             return;
         }
         List<ContentDocumentLink> contentDocumentLinks = [SELECT ContentDocumentId, LinkedEntityId FROM ContentDocumentLink WHERE LinkedEntityId IN :combinedIds];
         List<Id> contentDocumentIds = new List<Id>();
-        Map<Id, Id> contentDocumentToLinkedEntity = new Map<Id, Id>();
+        Map<Id, Id> docIdToLinkedEntity = new Map<Id, Id>();
         for (ContentDocumentLink cdl : contentDocumentLinks) {
             contentDocumentIds.add(cdl.ContentDocumentId);
-            contentDocumentToLinkedEntity.put(cdl.ContentDocumentId, cdl.LinkedEntityId);
+            docIdToLinkedEntity.put(cdl.ContentDocumentId, cdl.LinkedEntityId);
         }
 
-        Map<Id, Map<Id, Map<String, Object>>> contentIdToData = new  Map<Id, Map<Id, Map<String, Object>>>();
+        Map<Id, Map<Id, Map<String, Object>>> docIdToAttachment = new  Map<Id, Map<Id, Map<String, Object>>>();
         for (ContentVersion cv : [SELECT ContentDocumentId, VersionData, Title, FileType, FileExtension FROM ContentVersion WHERE ContentDocumentId IN :contentDocumentIds AND IsLatest = true]) {
-            // attachmentInfo holds map of linkedEntityId to map of attachment metadata
-            Map<Id, Map<String, Object>> attachmentInfo = new Map<Id, Map<String, Object>>{
-                contentDocumentToLinkedEntity.get(cv.ContentDocumentId) => new Map<String, Object>{
+            Id linkedEntityId = docIdToLinkedEntity.get(cv.ContentDocumentId);
+            Map<Id, Map<String, Object>> linkedEntityIdToAttachment = new Map<Id, Map<String, Object>>{
+                linkedEntityId => new Map<String, Object>{
                 'blob' => cv.VersionData,
                 'fileName' => cv.Title,
                 'fileType' => cv.FileType,
                 'fileExtension' => cv.FileExtension,
-                'emailSource' => emailIdsWithAttachments.contains(contentDocumentToLinkedEntity.get(cv.ContentDocumentId))
+                'emailSource' => emailIdsWithAttachments.contains(linkedEntityId)
             }};
-            contentIdToData.put(cv.ContentDocumentId, attachmentInfo);
+            docIdToAttachment.put(cv.ContentDocumentId, linkedEntityIdToAttachment);
         }       
 
         for (ContentDocumentLink cdl : contentDocumentLinks) {
-            Id parentCaseId = cdl.LinkedEntityId;
-            if(emailToCaseMap.containsKey(parentCaseId)) {
-                parentCaseId = emailToCaseMap.get(parentCaseId);
+            Boolean isEmail = false;
+            Id linkedEntityId = cdl.LinkedEntityId;
+            if(emailIdToCaseId.containsKey(linkedEntityId)) {
+                isEmail = true;
+                // If the linked entity is an email, get the case ID from the email ID
+                linkedEntityId = emailIdToCaseId.get(linkedEntityId);
             }
         
-            if (caseToEmailsAndAttachments.containsKey(parentCaseId)) {
-                Map<Id, Map<String, Object>> attachmentInfo = contentIdToData.get(cdl.ContentDocumentId);
-                if (attachmentInfo != null) {
-                    ((List<Map<Id, Map<String, Object>>>)caseToEmailsAndAttachments.get(parentCaseId)[2]).add(attachmentInfo);
+            if (caseToEmailsAndAttachments.containsKey(linkedEntityId)) {
+                Map<Id, Map<String, Object>> linkedEntityIdToAttachment = docIdToAttachment.get(cdl.ContentDocumentId);
+                if (linkedEntityIdToAttachment != null) {
+                    if (isEmail) {
+                        ((Map<String, List<Map<Id,Map<String,Object>>>>)caseToEmailsAndAttachments.get(linkedEntityId)[2]).get('email').add(linkedEntityIdToAttachment);
+                    } else {
+                        ((Map<String, List<Map<Id,Map<String,Object>>>>)caseToEmailsAndAttachments.get(linkedEntityId)[2]).get('case').add(linkedEntityIdToAttachment);          
+                    }
                 }
             }
-        }        
+        }  
     }
 
     private static void sendToBox() {
@@ -167,7 +175,8 @@ public with sharing class CasesArchiveToBox {
         
         Map<String, String> metadata = (Map<String, String>) caseToEmailsAndAttachments.get(caseId)[0];
         List<EmailMessage> emailMessages = (List<EmailMessage>) caseToEmailsAndAttachments.get(caseId)[1];
-        List<Map<Id, Map<String, Object>>> attachments = (List<Map<Id, Map<String, Object>>>) caseToEmailsAndAttachments.get(caseId)[2];
+        Map<String, List<Map<Id,Object>>> attachments = (Map<String, List<Map<Id,Object>>>) caseToEmailsAndAttachments.get(caseId)[2];
+        // List<Map<Id, Map<String, Object>>> attachments = (List<Map<Id, Map<String, Object>>>) caseToEmailsAndAttachments.get(caseId)[2];
         List<CaseComment> comments = (List<CaseComment>) caseToEmailsAndAttachments.get(caseId)[3];
         Map<Id, Map<Id, Map<String, Object>>> attachmentsMap = new Map<Id, Map<Id, Map<String, Object>>>();
         String caseNumber = metadata.get('caseNumber');
@@ -177,7 +186,6 @@ public with sharing class CasesArchiveToBox {
         String contactName = metadata.get('contactName');
         String parent = '';
         String id = '';
-        String folder = '';
         String casesFolder = '';
         String caseIdFolder = '';
 
@@ -189,72 +197,74 @@ public with sharing class CasesArchiveToBox {
             id = contactId;
         }
 
+        // parentCreatedNow and '-new' in accountOrContactFolder is to prevent unnecessary 'GET' for subfolders 
         Boolean parentCreatedNow = false;
-        folder = getOrCreateFolder(parent, id, parentCreatedNow);
-        if (folder != null && folder != '' & folder.contains('-new')) {
+        String accountOrContactFolder = getOrCreateFolder(parent, id, parentCreatedNow);
+        if (accountOrContactFolder != null && accountOrContactFolder != '' & accountOrContactFolder.contains('-new')) {
             parentCreatedNow = true;
-            folder = folder.replace('-new', '');
+            accountOrContactFolder = accountOrContactFolder.replace('-new', '');
         } 
 
-        if (folder != null && folder != '') {
-            casesFolder = getOrCreateFolder(folder, 'Cases', parentCreatedNow);
+        if (accountOrContactFolder != null && accountOrContactFolder != '') {
+            casesFolder = getOrCreateFolder(accountOrContactFolder, 'Cases', parentCreatedNow);
             if (casesFolder != null && casesFolder != '') {
                 caseIdFolder = getOrCreateFolder(casesFolder, caseId + '-' + caseNumber, true);
                 if (caseIdFolder != null && caseIdFolder != '') {
                     caseIdFolder = caseIdFolder.replace('-new', '');
                     System.debug('caseIdFolder: ' + caseIdFolder);
-                    // Access Attachment Blob data and Metadata
-                    for (Map<Id, Map<String, Object>> attachment : attachments) {
-                        Id firstKey = new List<Id>(attachment.keySet())[0];
-
-                        System.debug('ATTACHMENT: ' + firstKey);
-                        Blob contentData = (Blob)attachment.get(firstKey).get('blob');
-                        String fileName = (String)attachment.get(firstKey).get('fileName');
-                        String fileExtension = (String)attachment.get(firstKey).get('fileExtension');
-                        attachmentsMap.put(firstKey, attachment);
-                        System.debug('attachmentsMap: ' + attachmentsMap);
+                    // access attachment Blob and its metadata related to case (note email is handled separately (i.e. attached to email)
+                    for (Map<Id,Map<String,Object>> attachmentObj : (List<Map<Id,Map<String,Object>>>)attachments.get('case')) {
+                        System.debug('attachmentObj: ' + attachmentObj);
+                        Id linkedEntityId = new List<Id>(attachmentObj.keySet())[0];
+                        System.debug('linkedEntityId: ' + linkedEntityId);
+                        Map<String,Object> attachment = (Map<String, Object>)attachmentObj.get(linkedEntityId);
+                        System.debug('attachment: ' + attachment);
+                        // Boolean emailSource = (Boolean)attachmentDetails.get('emailSource');
+                    //     if (emailSource) {
+                    //         // we handle email attachments separately by attaching to .eml files
+                    //         continue;
+                    //     }
+                        
+                        Blob attachmentBinary = (Blob)attachment.get('blob');
+                        String attachmentFilename = (String)attachment.get('fileName') + '.' + (String)attachment.get('fileExtension');
+                        
+                        attachmentsMap.put(linkedEntityId, attachmentObj);
                         
                         // Create a Map to hold the Blob and its metadata
                         Map<String, Object> blobAttachment = new Map<String, Object>{
-                            'blob' => contentData,
-                            'fileName' => fileName + '.' + fileExtension
+                            'blob' => attachmentBinary,
+                            'fileName' => attachmentFilename
                         }; 
 
-                        Boolean emailSource = (Boolean)attachment.get(firstKey).get('emailSource');
-                        if (emailSource) {
-                            continue;
-                        } else {
-                            // Upload the attachment to Box
-                            uploadFileToBox(blobAttachment, caseIdFolder);
-                        }
+                        uploadFileToBox(blobAttachment, caseIdFolder);
                     }
 
                     // Access EmailMessages
                     String emailMessagesContent = '';
-                    // REMOVE .eml files
+                    // REMOVE? .eml files
                     List<String> emailMessagesContentEml = new List<String>();
 
                     for (EmailMessage e : emailMessages) {
-                        // Id, ParentId, ActivityId, CreatedById, CreatedDate, LastModifiedDate, LastModifiedById, SystemModstamp, TextBody, HtmlBody, Headers, Subject, Name, FromName, FromAddress, ValidatedFromAddress, ToAddress, CcAddress, BccAddress, Incoming, HasAttachment, Status, MessageDate, IsDeleted, ReplyToEmailMessageId, IsExternallyVisible, MessageIdentifier, ThreadIdentifier, ClientThreadIdentifier, IsClientManaged, RelatedToId, IsTracked, IsOpened, FirstOpenedDate, LastOpenedDate, IsBounced, EmailTemplateId
-                        String headers = '';
-                        if (e.Headers != null && e.Headers != '') {
-                            headers = e.Headers.replace('>', '&gt;');
-                            headers = headers.replace('<', '&lt;');
-                        }
+                        // // Id, ParentId, ActivityId, CreatedById, CreatedDate, LastModifiedDate, LastModifiedById, SystemModstamp, TextBody, HtmlBody, Headers, Subject, Name, FromName, FromAddress, ValidatedFromAddress, ToAddress, CcAddress, BccAddress, Incoming, HasAttachment, Status, MessageDate, IsDeleted, ReplyToEmailMessageId, IsExternallyVisible, MessageIdentifier, ThreadIdentifier, ClientThreadIdentifier, IsClientManaged, RelatedToId, IsTracked, IsOpened, FirstOpenedDate, LastOpenedDate, IsBounced, EmailTemplateId
+                        // String headers = '';
+                        // if (e.Headers != null && e.Headers != '') {
+                        //     headers = e.Headers.replace('>', '&gt;');
+                        //     headers = headers.replace('<', '&lt;');
+                        // }
 
-                        Map<Id,Map<String, Object>> emailAttachments = attachmentsMap.get(e.Id);
-                        List<Map<String, Object>> emailAttachmentsList = new List<Map<String, Object>>();
-                        String emailAttachmentsFiles = '[';
+                        // Map<Id,Map<String, Object>> emailAttachments = attachmentsMap.get(e.Id);
+                        // List<Map<String, Object>> emailAttachmentsList = new List<Map<String, Object>>();
+                        // String emailAttachmentsFiles = '[';
                         
-                        if (emailAttachments != null && emailAttachments.size() > 0) {
-                            for (Map<String, Object> emailAttachment : emailAttachments.values()) {
-                                emailAttachmentsFiles += emailAttachment.get('fileName') + '.' + emailAttachment.get('fileExtension') + ', ';
-                                Map<String, Object> singleAttachmentMap = new Map<String, Object>();
-                                singleAttachmentMap.put((String)emailAttachment.get('fileName') + '.' + emailAttachment.get('fileExtension'), emailAttachment.get('blob'));
-                                emailAttachmentsList.add(singleAttachmentMap);                            }
-                        }
+                        // if (emailAttachments != null && emailAttachments.size() > 0) {
+                        //     for (Map<String, Object> emailAttachment : emailAttachments.values()) {
+                        //         emailAttachmentsFiles += emailAttachment.get('fileName') + '.' + emailAttachment.get('fileExtension') + ', ';
+                        //         Map<String, Object> singleAttachmentMap = new Map<String, Object>();
+                        //         singleAttachmentMap.put((String)emailAttachment.get('fileName') + '.' + emailAttachment.get('fileExtension'), emailAttachment.get('blob'));
+                        //         emailAttachmentsList.add(singleAttachmentMap);                            }
+                        // }
 
-                        System.debug('emailAttachmentsList: ' + emailAttachmentsList);
+                        // System.debug('emailAttachmentsList: ' + emailAttachmentsList);
                         // emailAttachmentsFiles = emailAttachmentsFiles.removeEnd(', ') + ']';
                         // String emailContent = '<strong>Email Id: ' + e.Id + '</strong><br>' + 
                         // '<em>Other Fields:</em><br>' +
@@ -306,7 +316,7 @@ public with sharing class CasesArchiveToBox {
                         // 'Attachments: ' + (emailAttachmentsFiles == null ? '' : emailAttachmentsFiles) + '<br><br>';
                         // emailMessagesContent += emailContent;
 
-                        // REMOVE .eml files preparation
+                        // REMOVE? .eml files preparation
                         String emailContentEml = 'From: ' + e.FromName + ' [' + e.FromAddress + ']' + '\n' + 
                             'Sent: ' + String.valueOf(e.MessageDate) + '\n' + 
                             'To: ' + e.ToAddress + '\n' +  
@@ -329,23 +339,35 @@ public with sharing class CasesArchiveToBox {
 
                         body += '--alternative_boundary--\n\n';
 
-                        for (Map<String, Object> emailAttachment : emailAttachmentsList) {
-                            System.debug(emailAttachment);
-                            String attachmentFileName = new List<String>(emailAttachment.keySet())[0];
-                            Blob attachmentBlob = (Blob)emailAttachment.get(attachmentFileName);
+                        // add attachments
+                        if (e.HasAttachment) {
+                            for (Map<Id,Map<String,Object>> attachmentObj : (List<Map<Id,Map<String,Object>>>)attachments.get('email')) {
+                                System.debug('attachmentObj: ' + attachmentObj);
+                                Id linkedEntityId = new List<Id>(attachmentObj.keySet())[0];
+                                System.debug('linkedEntityId: ' + linkedEntityId);
+                                if (linkedEntityId != e.Id) {
+                                    continue;
+                                }
+                                Map<String,Object> attachment = (Map<String, Object>)attachmentObj.get(linkedEntityId);
+                                System.debug('attachment: ' + attachment);
+                                
+                                
+                                Blob attachmentBinary = (Blob)attachment.get('blob');
+                                String attachmentFileName = (String)attachment.get('fileName') + '.' + (String)attachment.get('fileExtension');
 
-                            Map<String, Object> emailAttachmentMap = new Map<String, Object>{
-                                'blob' => attachmentBlob,
-                                'fileName' => attachmentFileName
-                            };
-                            
-                            body += '--main_boundary\n';
-                            body += 'Content-Type: application/octet-stream; name="' + attachmentFileName + '"\n';
-                            body += 'Content-Disposition: attachment; filename="' + attachmentFileName + '"\n';
-                            body += 'Content-Transfer-Encoding: base64\n\n';
-                            
-                            String base64Data = EncodingUtil.base64Encode(attachmentBlob);
-                            body += base64Data + '\n\n';                            
+                                Map<String, Object> emailAttachmentMap = new Map<String, Object>{
+                                    'blob' => attachmentBinary,
+                                    'fileName' => attachmentFileName
+                                };
+                                
+                                body += '--main_boundary\n';
+                                body += 'Content-Type: application/octet-stream; name="' + attachmentFileName + '"\n';
+                                body += 'Content-Disposition: attachment; filename="' + attachmentFileName + '"\n';
+                                body += 'Content-Transfer-Encoding: base64\n\n';
+                                
+                                String base64Data = EncodingUtil.base64Encode(attachmentBinary);
+                                body += base64Data + '\n\n';                            
+                            }
                         }
 
                         // End of the multipart/mixed section
