@@ -1,6 +1,12 @@
+/*
+	This class was written using only the Box API reference (https://developer.box.com/reference/)
+*/
+
 public with sharing class CasesArchiveToBox {
     private static final String ACCOUNTS_FOLDER = '232841054083'; // change these to applicable Box folder IDs
     private static final String CONTACTS_FOLDER = '234058604832';
+	private static final String BOX_GET_CRED = 'box'; // change these to applicable named credential
+	private static final String BOX_UPLOAD_CRED = 'boxUpload';
     private static final Integer DAYS = 60; // how many days back to look for cases; NOTE: change SOQL in fetchCasesAndMetadata() to be < LAST_N_DAYS:DAYS
     private static Map<Id, List<Object>> caseToEmailsAndAttachments = new Map<Id, List<Object>>();
 
@@ -26,7 +32,6 @@ public with sharing class CasesArchiveToBox {
 
     // Case IDs and initial metadata
     private static void fetchCasesAndMetadata(){
-
         if(Schema.sObjectType.Case.isAccessible()){
             String query = 'SELECT Id, CaseNumber, Subject, Description, ClosedDate, CreatedDate, CreatedById, LastModifiedById, Origin, AccountId, Account.Name, ContactId, Contact.Name, OwnerId, Owner.Name, Status, Priority, Reason, Type, SuppliedEmail, SuppliedCompany, SuppliedName, SuppliedPhone FROM Case WHERE ClosedDate = LAST_N_DAYS:' + DAYS;
             List<Case> cases = Database.query(query);
@@ -114,13 +119,12 @@ public with sharing class CasesArchiveToBox {
         }
 
         Map<Id, Map<Id, Map<String, Object>>> docIdToAttachment = new  Map<Id, Map<Id, Map<String, Object>>>();
-        for(ContentVersion cv : [SELECT ContentDocumentId, VersionData, Title, FileType, FileExtension FROM ContentVersion WHERE ContentDocumentId IN :contentDocumentIds AND IsLatest = true]){
+        for(ContentVersion cv : [SELECT ContentDocumentId, VersionData, Title, FileExtension FROM ContentVersion WHERE ContentDocumentId IN :contentDocumentIds AND IsLatest = true]){
             Id linkedEntityId = docIdToLinkedEntity.get(cv.ContentDocumentId);
             Map<Id, Map<String, Object>> linkedEntityIdToAttachment = new Map<Id, Map<String, Object>>{
                 linkedEntityId => new Map<String, Object>{
                 'blob' => cv.VersionData,
                 'fileName' => cv.Title,
-                'fileType' => cv.FileType,
                 'fileExtension' => cv.FileExtension,
                 'emailSource' => emailIdsWithAttachments.contains(linkedEntityId)
             }};
@@ -246,14 +250,14 @@ public with sharing class CasesArchiveToBox {
                     }
 
                     // create case with comments file and upload - NEED TO GET ACTUAL FIELDS AS > 300 in use
-                    String pdfContent = 'Case Number: ' + metadata.get('caseNumber') + '<br>' + 'Subject: ' + metadata.get('subject') + '<br>' +
+                    String pdfContent = 'Case Number: ' + caseNumber + '<br>' + 'Subject: ' + metadata.get('subject') + '<br>' +
                     'Status: ' + metadata.get('status') + '<br>' + 'Priority: ' + metadata.get('priority') + '<br>' +
                     'Description: ' + metadata.get('description') + '<br>' + 'Closed Date: ' + metadata.get('closedDate') + '<br>' +
                     'Created Date: ' + metadata.get('createdDate') + '<br>' + 'Origin: ' + metadata.get('origin') + '<br>' +
                     'Created By Id: ' + metadata.get('createdById') + '<br>' +
                     'Last Modified By Id: ' + metadata.get('lastModifiedById') + '<br>' +
-                    'Account Id: ' + accountId + '<br>' + 'Account Name: ' + metadata.get('accountName') + '<br>' +
-                    'Contact Id: ' + contactId + '<br>' + 'Contact Name: ' + metadata.get('contactName') + '<br>' +
+                    'Account Id: ' + accountId + '<br>' + 'Account Name: ' + accountName + '<br>' +
+                    'Contact Id: ' + contactId + '<br>' + 'Contact Name: ' + contactName + '<br>' +
                     'Owner Id: ' + metadata.get('ownerId') + '<br>' + 'Owner Name: ' + metadata.get('ownerName') + '<br>' +
                     'Reason: ' + metadata.get('reason') + '<br>' + 'Type: ' + metadata.get('caseType') + '<br>' +
                     'Supplied Email: ' + metadata.get('suppliedEmail') + '<br>' + 'Supplied Company: ' + metadata.get('suppliedCompany') + '<br>' +
@@ -397,10 +401,9 @@ public with sharing class CasesArchiveToBox {
         req.setMethod(config.get('method'));
 
         if(fileBlob != null){
-            req.setEndpoint('callout:boxUpload/' + config.get('endpoint'));
+            req.setEndpoint('callout:' + BOX_UPLOAD_CRED + '/' + config.get('endpoint'));
         }else{
-            System.debug('FILE BLOB IS NULL for fileName: ' + config.get('fileName') + ' and attributes: ' + config.get('attributes'));
-            req.setEndpoint('callout:box/' + config.get('endpoint'));
+            req.setEndpoint('callout:' + BOX_GET_CRED + '/' + config.get('endpoint'));
         }
 
         if(String.isNotBlank(config.get('body')) && fileBlob == null){
@@ -425,8 +428,9 @@ public with sharing class CasesArchiveToBox {
         HttpResponse res = http.send(req);
         return res;
     }
-
-    public static Blob base64EncodeBinary(Blob fileBody, String fileName){
+	// this method is to enable posting multipart/form-data to Box; ref: https://enreeco.blogspot.com/2013/01/salesforce-apex-post-mutipartform-data.html
+	// If desired, 'Box Toolkit' can possibly be used for some of the functionality (https://developer.box.com/guides/tooling/salesforce-toolkit/methods/)
+	public static Blob base64EncodeBinary(Blob fileBody, String fileName){
         String boundary = '----------------------------123456789';
         String header = '--'+boundary+'\nContent-Disposition: form-data; name="file"; filename="' + fileName+'";\nContent-Type: application/octet-stream';
         String footer = '--'+boundary+'--';
@@ -438,6 +442,8 @@ public with sharing class CasesArchiveToBox {
         }
 
         String bodyEncoded = EncodingUtil.base64Encode(fileBody);
+		// 12MB limit from SF; per Box: due to string bloat with base64 encoding, this results in an
+		// effective file size limit of 8.6MB for asynch Apex (https://developer.box.com/guides/tooling/salesforce-toolkit/methods/)
         if(bodyEncoded.length() > 12000000){
             System.debug('FILE SIZE OF: ' + fileName + ' IS TOO LARGE: ' + bodyEncoded.length());
             return null;
@@ -447,7 +453,7 @@ public with sharing class CasesArchiveToBox {
         String last4Bytes = bodyEncoded.substring(bodyEncoded.length()-4,bodyEncoded.length());
 
         if(last4Bytes.endsWith('==')){
-            last4Bytes = last4Bytes.substring(0,2) + '0K';
+            last4Bytes = last4Bytes.substring(0,2) + '0K'; //
             bodyEncoded = bodyEncoded.substring(0,bodyEncoded.length()-4) + last4Bytes;
         }else if(last4Bytes.endsWith('=')){
             last4Bytes = last4Bytes.substring(0,3) + 'N';
@@ -458,7 +464,6 @@ public with sharing class CasesArchiveToBox {
         }
 
         String footerEncoded = EncodingUtil.base64Encode(Blob.valueOf(footer));
-        System.debug('footerEncoded length: ' + footerEncoded.length());
         bodyBlob = EncodingUtil.base64Decode(headerEncoded+bodyEncoded+footerEncoded);
         return bodyBlob;
     }
