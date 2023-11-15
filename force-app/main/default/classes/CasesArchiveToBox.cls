@@ -411,17 +411,12 @@ public with sharing class CasesArchiveToBox {
             req.setBody(config.get('body'));
         }
 
-        if(fileBlob != null){
-            Map<String, Object> m = (Map<String, Object>) JSON.deserializeUntyped(config.get('attributes'));
-            Map<String, Object> m2 = (Map<String, Object>) m.get('parent');
-            String folderId = (String) m2.get('id');
+        if (fileBlob != null) {
             blob base64File = base64EncodeBinary(fileBlob, config.get('fileName'));
             if (base64File == null) {
                 return null;
             }
             String boundary = '----------------------------123456789';
-            String body = '{"name":"' + config.get('fileName') + '", "parent":{"id":"' + folderId + '"}}';
-            req.setBody(body);
             req.setBodyAsBlob(base64File);
             req.setHeader('Content-Type','multipart/form-data; boundary=' + boundary);
         }
@@ -453,7 +448,7 @@ public with sharing class CasesArchiveToBox {
         String last4Bytes = bodyEncoded.substring(bodyEncoded.length()-4,bodyEncoded.length());
 
         if(last4Bytes.endsWith('==')){
-            last4Bytes = last4Bytes.substring(0,2) + '0K'; //
+            last4Bytes = last4Bytes.substring(0,2) + '0K';
             bodyEncoded = bodyEncoded.substring(0,bodyEncoded.length()-4) + last4Bytes;
         }else if(last4Bytes.endsWith('=')){
             last4Bytes = last4Bytes.substring(0,3) + 'N';
@@ -471,19 +466,10 @@ public with sharing class CasesArchiveToBox {
     private static void uploadFileToBox(Map<String, Object> attachment, String caseIdFolder){
         Blob fileBlob = (Blob) attachment.get('blob');
         String fileName = (String) attachment.get('fileName');
-        System.debug('FILE BLOB: ' + fileBlob);
-        System.debug('FILE NAME: ' + fileName);
+
         if(caseIdFolder != null && caseIdFolder != ''){
             String fileEndpoint = 'files/content?parent_id=' + caseIdFolder;
-            Map<String, Object> parentFolder = new Map<String, Object>{ 'id' => caseIdFolder };
-            Map<String, Object> fileAttributes = new Map<String, Object>{
-                'name' => fileName,
-                'parent' => parentFolder,
-                'content_created_at' => '',
-                'content_modified_at' => ''
-            };
-            String attributes = JSON.serialize(fileAttributes);
-            HttpResponse fileResponse = makeBoxApiCall(new Map<String, String>{'endpoint' => fileEndpoint, 'method' => 'POST', 'attributes' => attributes, 'body' => null, 'fileName' => fileName}, fileBlob);
+            HttpResponse fileResponse = makeBoxApiCall(new Map<String, String>{'endpoint' => fileEndpoint, 'method' => 'POST', 'body' => null, 'fileName' => fileName}, fileBlob);
             if(fileResponse == null){
                 System.debug('http response is null; check filesize > 12MB; returning...');
                 return;
