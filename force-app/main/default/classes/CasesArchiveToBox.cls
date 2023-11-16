@@ -418,7 +418,6 @@ public with sharing class CasesArchiveToBox {
                 return null;
             }
             req.setHeader('Content-Type','multipart/form-data; boundary=' + boundary);
-			req.setCompressed(true);
             req.setBodyAsBlob(base64File);
         }
         HttpResponse res = http.send(req);
