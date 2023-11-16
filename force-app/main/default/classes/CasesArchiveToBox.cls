@@ -418,14 +418,15 @@ public with sharing class CasesArchiveToBox {
                 return null;
             }
             req.setHeader('Content-Type','multipart/form-data; boundary=' + boundary);
+			req.setCompressed(true);
             req.setBodyAsBlob(base64File);
         }
         HttpResponse res = http.send(req);
         return res;
     }
 
-	// this method is to enable posting multipart/form-data to Box; ref: https://enreeco.blogspot.com/2013/01/salesforce-apex-post-mutipartform-data.html
-	// If desired, 'Box Toolkit' can possibly be used for some of the functionality (https://developer.box.com/guides/tooling/salesforce-toolkit/methods/)
+	// this method is to enable posting multipart/form-data to Box
+	// ref: https://github.com/box/box-salesforce-sdk/blob/master/src/classes/BoxBase64.cls Origin with background: https://enreeco.blogspot.com/2013/01/salesforce-apex-post-mutipartform-data.html
 	public static Blob prepareMultipartFormBinary(Blob fileBody, String fileName){
         String boundary = '----------------------------123456789';
         String header = '--' + boundary + '\nContent-Disposition: form-data; name="file"; filename="' + fileName + '";\nContent-Type: application/octet-stream';
