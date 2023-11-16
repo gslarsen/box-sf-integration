@@ -412,32 +412,33 @@ public with sharing class CasesArchiveToBox {
         }
 
         if (fileBlob != null) {
-            blob base64File = base64EncodeBinary(fileBlob, config.get('fileName'));
+			String boundary = '----------------------------123456789';
+            blob base64File = prepareMultipartFormBinary(fileBlob, config.get('fileName'));
             if (base64File == null) {
                 return null;
             }
-            String boundary = '----------------------------123456789';
-            req.setBodyAsBlob(base64File);
             req.setHeader('Content-Type','multipart/form-data; boundary=' + boundary);
+            req.setBodyAsBlob(base64File);
         }
         HttpResponse res = http.send(req);
         return res;
     }
+
 	// this method is to enable posting multipart/form-data to Box; ref: https://enreeco.blogspot.com/2013/01/salesforce-apex-post-mutipartform-data.html
 	// If desired, 'Box Toolkit' can possibly be used for some of the functionality (https://developer.box.com/guides/tooling/salesforce-toolkit/methods/)
-	public static Blob base64EncodeBinary(Blob fileBody, String fileName){
+	public static Blob prepareMultipartFormBinary(Blob fileBody, String fileName){
         String boundary = '----------------------------123456789';
-        String header = '--'+boundary+'\nContent-Disposition: form-data; name="file"; filename="' + fileName+'";\nContent-Type: application/octet-stream';
-        String footer = '--'+boundary+'--';
-        String headerEncoded = EncodingUtil.base64Encode(Blob.valueOf(header+'\r\n\r\n'));
+        String header = '--' + boundary + '\nContent-Disposition: form-data; name="file"; filename="' + fileName + '";\nContent-Type: application/octet-stream';
+        String footer = '--' + boundary + '--';
+        String headerEncoded = EncodingUtil.base64Encode(Blob.valueOf(header + '\r\n\r\n'));
 
 		while(headerEncoded.endsWith('=')){
-            header+=' ';
-            headerEncoded = EncodingUtil.base64Encode(Blob.valueOf(header+'\r\n\r\n'));
+            header += ' ';
+            headerEncoded = EncodingUtil.base64Encode(Blob.valueOf(header + '\r\n\r\n'));
         }
 
         String bodyEncoded = EncodingUtil.base64Encode(fileBody);
-		// 12MB limit from SF; per Box: due to string bloat with base64 encoding, this results in an
+		// 12MB limit from SF; due to string bloat with base64 encoding, this results in an
 		// effective file size limit of 8.6MB for asynch Apex (https://developer.box.com/guides/tooling/salesforce-toolkit/methods/)
         if(bodyEncoded.length() > 12000000){
             System.debug('FILE SIZE OF: ' + fileName + ' IS TOO LARGE: ' + bodyEncoded.length());
@@ -447,19 +448,19 @@ public with sharing class CasesArchiveToBox {
         Blob bodyBlob = null;
         String last4Bytes = bodyEncoded.substring(bodyEncoded.length()-4,bodyEncoded.length());
 
-        if(last4Bytes.endsWith('==')){
-            last4Bytes = last4Bytes.substring(0,2) + '0K';
+        if(last4Bytes.endsWith('==')){ // indicate 4 bits of padding added to end of string
+            last4Bytes = last4Bytes.substring(0,2) + '0K'; // replace with '0K', which represents the remaining Base64 characters to finish with CRLF
             bodyEncoded = bodyEncoded.substring(0,bodyEncoded.length()-4) + last4Bytes;
         }else if(last4Bytes.endsWith('=')){
-            last4Bytes = last4Bytes.substring(0,3) + 'N';
+            last4Bytes = last4Bytes.substring(0,3) + 'N';  // replace with 'N' for remainder of CR
             bodyEncoded = bodyEncoded.substring(0,bodyEncoded.length()-4) + last4Bytes;
-            footer = '\n' + footer;
+            footer = '\n' + footer; // handle LF
         }else{
             footer = '\r\n' + footer;
         }
 
         String footerEncoded = EncodingUtil.base64Encode(Blob.valueOf(footer));
-        bodyBlob = EncodingUtil.base64Decode(headerEncoded+bodyEncoded+footerEncoded);
+        bodyBlob = EncodingUtil.base64Decode(headerEncoded + bodyEncoded + footerEncoded);
         return bodyBlob;
     }
 
