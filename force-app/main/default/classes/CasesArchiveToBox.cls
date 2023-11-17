@@ -2,7 +2,7 @@
 	This class was written using only the Box API reference (https://developer.box.com/reference/)
 */
 
-public with sharing class CasesArchiveToBox {
+public with sharing class CasesArchiveToBox{
     private static final String ACCOUNTS_FOLDER = '232841054083'; // change these to applicable Box folder IDs
     private static final String CONTACTS_FOLDER = '234058604832';
 	private static final String BOX_GET_CRED = 'box'; // change these to applicable named credential
