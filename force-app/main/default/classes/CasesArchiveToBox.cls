@@ -1,5 +1,6 @@
 /*
 	This class was written using only the Box API reference (https://developer.box.com/reference/)
+    Note: if there are any failures in API calls, the case will not be deleted from SF
 */
 
 public with sharing class CasesArchiveToBox{
@@ -7,13 +8,14 @@ public with sharing class CasesArchiveToBox{
     private static final String CONTACTS_FOLDER = '234058604832';
 	private static final String BOX_GET_CRED = 'box'; // change these to applicable named credential
 	private static final String BOX_UPLOAD_CRED = 'boxUpload';
-    private static final Integer DAYS = 60; // how many days back to look for cases; NOTE: change SOQL in fetchCasesAndMetadata() to be < LAST_N_DAYS:DAYS
+    private static final Integer DAYS = 1; // how many days back to look for cases; NOTE: change SOQL in fetchCasesAndMetadata() to be < LAST_N_DAYS:DAYS
     private static Map<Id, List<Object>> caseToEmailsAndAttachments = new Map<Id, List<Object>>();
+    private static Map<Id, Case> cases = new Map<Id, Case>();
 
     @future(callout=true)
     public static void archiveCases(){
         // DELETE CASES FROM HERE IF NOT ABLE TO PUT IN BOX (e.g. can't create folder or post files)
-        Map<Id, Case> cases = fetchCasesAndMetadata();
+        cases = fetchCasesAndMetadata();
         if(cases.isEmpty()){
             System.debug('No cases found-returning');
             return;
@@ -29,7 +31,8 @@ public with sharing class CasesArchiveToBox{
         fetchAttachments(combinedIds, emailIdToCaseId, emailIdsWithAttachments);
         fetchComments(caseIds);
         sendToBox();
-        // deleteCases(cases);
+        List<Case> casesToDelete = new List<Case>(cases.values());
+        deleteCases(casesToDelete);
     }
 
     // Case IDs and initial metadata
@@ -178,7 +181,6 @@ public with sharing class CasesArchiveToBox{
         if(caseId == null || caseId == '' || type == null || type == ''){
             return;
         }
-
         Map<String, String> metadata = (Map<String, String>) caseToEmailsAndAttachments.get(caseId)[0];
         List<EmailMessage> emailMessages = (List<EmailMessage>) caseToEmailsAndAttachments.get(caseId)[1];
         Map<String, List<Map<Id,Object>>> attachments = (Map<String, List<Map<Id,Object>>>) caseToEmailsAndAttachments.get(caseId)[2];
@@ -215,6 +217,8 @@ public with sharing class CasesArchiveToBox{
         Boolean parentCreatedNow = false;
         accountOrContactFolder = getOrCreateFolder(parent, id, parentCreatedNow);
         if(accountOrContactFolder == null || accountOrContactFolder == ''){
+            System.debug('accountOrContactFolder Id is null or empty');
+            cases.remove(caseId);
             return;
         }
         if(accountOrContactFolder.contains('-new')){
@@ -224,12 +228,17 @@ public with sharing class CasesArchiveToBox{
 
         casesFolder = getOrCreateFolder(accountOrContactFolder, 'Cases', parentCreatedNow);
         if(casesFolder == null || casesFolder == ''){
+            System.debug('casesFolder Id is null or empty');
+            cases.remove(caseId);
             return;
         }
         casesFolder = casesFolder.replace('-new', '');
 
+        // always add new case folder - no need to check if exists - third param is true
         caseIdFolder = getOrCreateFolder(casesFolder, caseNumber + '_' + createdDate + '_' + closedDate, true);
         if(caseIdFolder == null || caseIdFolder == ''){
+            System.debug('caseIdFolder Id is null or empty');
+            cases.remove(caseId);
             return;
         }
         caseIdFolder = caseIdFolder.replace('-new', '');
@@ -245,7 +254,10 @@ public with sharing class CasesArchiveToBox{
                 'blob' => attachmentBinary,
                 'fileName' => attachmentFilename
             };
-            uploadFileToBox(blobAttachment, caseIdFolder);
+            if(!uploadFileToBox(blobAttachment, caseIdFolder)){
+                System.debug('Failed to upload case attachment file: ' + attachmentFilename + ' caseId: ' + caseId + ' will not be deleted from SF');
+                cases.remove(caseId);
+            }
         }
 
         // Access EmailMessages
@@ -255,6 +267,10 @@ public with sharing class CasesArchiveToBox{
         for(EmailMessage e : emailMessages){
             String emailSent = String.valueOf(e.MessageDate);
             String emailContent = prepareEmail(e, (List<Map<Id,Map<String,Object>>>)attachments.get('email'));
+            if(emailContent == null || emailContent == ''){
+                System.debug('emailContent is null or empty');
+                continue;
+            }
             emailMessagesContentEml.add(new Map<String,String>{emailSent => emailContent});
         }
 
@@ -270,9 +286,11 @@ public with sharing class CasesArchiveToBox{
                 'fileName' => emailEmlFileName,
                 'fileType' => 'text/plain'
             };
-            uploadFileToBox(emailEmlAttachment, caseIdFolder);
+            if(!uploadFileToBox(emailEmlAttachment, caseIdFolder)){
+                System.debug('Failed to upload email file: ' + emailEmlFileName + ' caseId: ' + caseId + ' will not be deleted from SF');
+                cases.remove(caseId);
+            }
         }
-
         // create case with comments file and upload - NEED TO GET ACTUAL FIELDS AS > 300 in use
         String pdfContent = 'Case Number: ' + caseNumber + '<br>' + 'Subject: ' + metadata.get('subject') + '<br>' +
         'Status: ' + metadata.get('status') + '<br>' + 'Priority: ' + metadata.get('priority') + '<br>' +
@@ -306,10 +324,16 @@ public with sharing class CasesArchiveToBox{
             'fileName' => pdfFileName,
             'fileType' => 'application/pdf'
         };
-        uploadFileToBox(pdfAttachment, caseIdFolder);
+        if(!uploadFileToBox(pdfAttachment, caseIdFolder)){
+            System.debug('Failed to upload case details file: ' + pdfFileName + ' caseId: ' + caseId + ' will not be deleted from SF');
+            cases.remove(caseId);
+        }
     }
 
     public static String prepareEmail(EmailMessage e, List<Map<Id,Map<String,Object>>> attachments){
+        if(e == null || attachments == null){
+            return '';
+        }
         // .eml files headers
         String emailContentEml = 'From: ' + e.FromName + ' [' + e.FromAddress + ']' + '\n' +
             'Sent: ' + String.valueOf(e.MessageDate) + '\n' +
@@ -318,20 +342,19 @@ public with sharing class CasesArchiveToBox{
             'Bcc: ' + (e.BccAddress == null ? '' : e.BccAddress) + '\n' +
             'Subject: ' + e.Subject + '\n' +
             'MIME-Version: 1.0' + '\n' +
-            'Content-Type: multipart/mixed; boundary="main_boundary"\n\n'; // + '\n' + //alternative
-
+            'Content-Type: multipart/mixed; boundary="main_boundary"\n\n';
         // email body
         String body = '';
         body += '--main_boundary\n';
-        body += 'Content-Type: multipart/alternative; boundary="alternative_boundary"\n\n';
+        body += 'Content-Type: multipart/alternative; boundary="alternate_boundary"\n\n';
 
         if(String.isNotEmpty(e.TextBody)){
-            body += '--alternative_boundary\n';
+            body += '--alternate_boundary\n';
             body += 'Content-Type: text/plain; charset=UTF-8\n\n';
             body += e.TextBody + '\n\n';
         }
 
-        body += '--alternative_boundary--\n\n';
+        body += '--alternate_boundary--\n\n';
 
         // add any attachments
         if(e.HasAttachment){
@@ -365,13 +388,18 @@ public with sharing class CasesArchiveToBox{
     }
 
     private static String getOrCreateFolder(String parentId, String folderName, Boolean parentCreatedNow){
+        if(parentId == null || parentId == '' || folderName == null || folderName == '' || parentCreatedNow == null){
+            return '';
+        }
         if(!parentCreatedNow){
             // Check if folder exists
             HttpResponse res = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders/' + parentId + '/items', 'method' => 'GET', 'attributes' => null, 'body' => null, 'fileName' => null}, null);
-
+            if (res == null) {
+                System.debug('http response is null; returning...');
+                return '';
+            }
             if(res.getStatusCode() == 200){
                 Map<String, Object> jsonResponse = (Map<String, Object>) JSON.deserializeUntyped(res.getBody());
-
                 List<Object> entries = (List<Object>) jsonResponse.get('entries');
 
                 for(Object entryObj : entries){
@@ -389,29 +417,56 @@ public with sharing class CasesArchiveToBox{
             // folder does not exist, so create it
             String folderBody = '{"name":"' + folderName + '", "parent": {"id":"' + parentId + '"}}';
             HttpResponse createRes = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders', 'method' => 'POST', 'attributes' => null, 'body' => folderBody, 'fileName' => null}, null);
+            if (createRes == null) {
+                System.debug('http response is null; returning...');
+                return '';
+            }
             if(createRes.getStatusCode() == 201){
                 Map<String, Object> createResponse = (Map<String, Object>) JSON.deserializeUntyped(createRes.getBody());
                 String newFolderId = (String) createResponse.get('id');
-
                 // Return new folder ID and indicate new acct/contact folder was created to prevent unnecessary 'GET' for subfolder
                 return newFolderId + '-' + 'new';
+            }else{
+                System.debug('Failed to create folder: ' + createRes.getBody());
+                return '';
             }
         }else{
-            // folder does not exist, so create it
+            // parentCreatedNow == true; folder likely doesn't exist, so try to create it
             String folderBody = '{"name":"' + folderName + '", "parent": {"id":"' + parentId + '"}}';
             HttpResponse createRes = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders', 'method' => 'POST', 'attributes' => null, 'body' => folderBody, 'fileName' => null}, null);
-            if (createRes.getStatusCode() == 201) {
+            if(createRes == null){
+                System.debug('http response is null; returning...');
+                return '';
+            }
+            if(createRes.getStatusCode() == 201){
                 Map<String, Object> createResponse = (Map<String, Object>) JSON.deserializeUntyped(createRes.getBody());
                 String newFolderId = (String) createResponse.get('id');
-
                 // Return new folder ID
                 return newFolderId;
+            }else if(createRes.getStatusCode() == 409){
+                // check if folder already exists and if so, return the folder ID
+                Map<String, Object> createResponse = (Map<String, Object>)JSON.deserializeUntyped(createRes.getBody());
+                if(createResponse.get('code') == 'item_name_in_use'){
+                    Map<String, Object> contextInfo = (Map<String, Object>)createResponse.get('context_info');
+                    List<Object> conflicts = (List<Object>)contextInfo.get('conflicts');
+                    Map<String, Object> conflict = (Map<String, Object>)conflicts[0];
+                    String folderId = (String)conflict.get('id');
+                    return folderId;
+                }else{
+                    System.debug('Failed to create folder: ' + createRes.getBody());
+                    return '';
+                }
+            }else{
+                System.debug('Failed to create folder: ' + createRes.getBody());
+                return '';
             }
         }
-        return null; // Error condition
     }
 
     private static HttpResponse makeBoxApiCall(Map<String, String> config, Blob fileBlob){
+        if(config == null || config.isEmpty()){
+            return null;
+        }
         Http http = new Http();
         HttpRequest req = new HttpRequest();
         req.setMethod(config.get('method'));
@@ -428,7 +483,7 @@ public with sharing class CasesArchiveToBox{
         }
 
         if (fileBlob != null) {
-			String boundary = '----------------------------123456789';
+			String boundary = '--boundary';
             blob base64File = prepareMultipartFormBinary(fileBlob, config.get('fileName'));
             if (base64File == null) {
                 return null;
@@ -443,7 +498,10 @@ public with sharing class CasesArchiveToBox{
 	// this method is to enable posting multipart/form-data to Box
 	// ref: https://github.com/box/box-salesforce-sdk/blob/master/src/classes/BoxBase64.cls Origin with background: https://enreeco.blogspot.com/2013/01/salesforce-apex-post-mutipartform-data.html
 	public static Blob prepareMultipartFormBinary(Blob fileBody, String fileName){
-        String boundary = '----------------------------123456789';
+        if(fileBody == null || fileName == null || fileName == ''){
+            return null;
+        }
+        String boundary = '--boundary';
         String header = '--' + boundary + '\nContent-Disposition: form-data; name="file"; filename="' + fileName + '";\nContent-Type: application/octet-stream';
         String footer = '--' + boundary + '--';
         String headerEncoded = EncodingUtil.base64Encode(Blob.valueOf(header + '\r\n\r\n'));
@@ -480,22 +538,36 @@ public with sharing class CasesArchiveToBox{
         return bodyBlob;
     }
 
-    private static void uploadFileToBox(Map<String, Object> attachment, String caseIdFolder){
+    private static Boolean uploadFileToBox(Map<String, Object> attachment, String caseIdFolder){
+        if(attachment == null || attachment.isEmpty() || caseIdFolder == null || caseIdFolder == ''){
+            return false;
+        }
+
         Blob fileBlob = (Blob) attachment.get('blob');
         String fileName = (String) attachment.get('fileName');
-
-        if(caseIdFolder != null && caseIdFolder != ''){
-            String fileEndpoint = 'files/content?parent_id=' + caseIdFolder;
-            HttpResponse fileResponse = makeBoxApiCall(new Map<String, String>{'endpoint' => fileEndpoint, 'method' => 'POST', 'body' => null, 'fileName' => fileName}, fileBlob);
-            if(fileResponse == null){
-                System.debug('http response is null; check filesize > 12MB; returning...');
-                return;
+        String fileEndpoint = 'files/content?parent_id=' + caseIdFolder;
+        HttpResponse fileResponse = makeBoxApiCall(new Map<String, String>{'endpoint' => fileEndpoint, 'method' => 'POST', 'body' => null, 'fileName' => fileName}, fileBlob);
+        if(fileResponse == null){
+            System.debug('http response is null; returning...');
+            return false;
+        }
+        if(fileResponse.getStatusCode() == 201){
+            System.debug('File uploaded successfully');
+            return true;
+        }
+        if(fileResponse.getStatusCode() == 409){
+            // check if file already exists and if so, return the file ID
+            Map<String, Object> createResponse = (Map<String, Object>)JSON.deserializeUntyped(fileResponse.getBody());
+            if(createResponse.get('code') == 'item_name_in_use'){
+                Map<String, Object> contextInfo = (Map<String, Object>)createResponse.get('context_info');
+                Map<String, Object> conflicts = (Map<String, Object>)contextInfo.get('conflicts');
+                String boxFileName = (String)conflicts.get('name');
+                return boxFileName == fileName;
             }
-            if(fileResponse.getStatusCode() == 201){
-                System.debug('File uploaded successfully');
-            }else{
-                System.debug('Failed to upload file: ' + fileResponse.getBody());
-            }
+            return false; // CHECK THIS FOR FILE UPLOADS!!!
+        }else{
+            System.debug('Failed to upload file: ' + fileResponse.getBody());
+            return false;
         }
     }
 
