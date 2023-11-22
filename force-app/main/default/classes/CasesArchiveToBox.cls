@@ -8,7 +8,7 @@ public with sharing class CasesArchiveToBox{
     private static final String CONTACTS_FOLDER = '234058604832';
 	private static final String BOX_GET_CRED = 'box'; // change these to applicable named credential
 	private static final String BOX_UPLOAD_CRED = 'boxUpload';
-    private static final Integer DAYS = 1; // how many days back to look for cases; NOTE: change SOQL in fetchCasesAndMetadata() to be < LAST_N_DAYS:DAYS
+    private static final Integer DAYS = 60; // how many days back to look for cases; NOTE: change SOQL in fetchCasesAndMetadata() to be < LAST_N_DAYS:DAYS
     private static Map<Id, List<Object>> caseToEmailsAndAttachments = new Map<Id, List<Object>>();
     private static Map<Id, Case> cases = new Map<Id, Case>();
 
@@ -32,7 +32,7 @@ public with sharing class CasesArchiveToBox{
         fetchComments(caseIds);
         sendToBox();
         List<Case> casesToDelete = new List<Case>(cases.values());
-        deleteCases(casesToDelete);
+        // deleteCases(casesToDelete);
     }
 
     // Case IDs and initial metadata
@@ -386,7 +386,7 @@ public with sharing class CasesArchiveToBox{
         emailContentEml += body;
         return emailContentEml;
     }
-
+    // CAN THIS BE REFACTORED TO POST FIRST AND RETURN - REF. uploadFileToBox()???
     private static String getOrCreateFolder(String parentId, String folderName, Boolean parentCreatedNow){
         if(parentId == null || parentId == '' || folderName == null || folderName == '' || parentCreatedNow == null){
             return '';
