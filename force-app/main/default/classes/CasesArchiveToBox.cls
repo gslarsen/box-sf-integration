@@ -150,12 +150,10 @@ public with sharing class CasesArchiveToBox{
 
             if(caseToEmailsAndAttachments.containsKey(linkedEntityId)){
                 Map<Id, Map<String, Object>> linkedEntityIdToAttachment = docIdToAttachment.get(cdl.ContentDocumentId);
-                if(linkedEntityIdToAttachment != null){
-                    if(isEmail){
-                        ((Map<String, List<Map<Id,Map<String,Object>>>>)caseToEmailsAndAttachments.get(linkedEntityId)[2]).get('email').add(linkedEntityIdToAttachment);
-                    }else{
-                        ((Map<String, List<Map<Id,Map<String,Object>>>>)caseToEmailsAndAttachments.get(linkedEntityId)[2]).get('case').add(linkedEntityIdToAttachment);
-                    }
+                if(isEmail){
+                    ((Map<String, List<Map<Id,Map<String,Object>>>>)caseToEmailsAndAttachments.get(linkedEntityId)[2]).get('email').add(linkedEntityIdToAttachment);
+                }else{
+                    ((Map<String, List<Map<Id,Map<String,Object>>>>)caseToEmailsAndAttachments.get(linkedEntityId)[2]).get('case').add(linkedEntityIdToAttachment);
                 }
             }
         }
