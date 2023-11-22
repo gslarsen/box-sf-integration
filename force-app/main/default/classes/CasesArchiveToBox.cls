@@ -32,7 +32,7 @@ public with sharing class CasesArchiveToBox{
         fetchComments(caseIds);
         sendToBox();
         List<Case> casesToDelete = new List<Case>(cases.values());
-        // deleteCases(casesToDelete);
+        // deleteCases(casesToDelete); // NOTE: uncomment this line to delete cases from SF
     }
 
     // Case IDs and initial metadata
@@ -213,35 +213,26 @@ public with sharing class CasesArchiveToBox{
             id = contactId;
         }
 
-        // parentCreatedNow and '-new' in accountOrContactFolder is to prevent unnecessary 'GET' for subfolder
-        Boolean parentCreatedNow = false;
-        accountOrContactFolder = getOrCreateFolder(parent, id, parentCreatedNow);
+        accountOrContactFolder = getOrCreateFolder(parent, id);
         if(accountOrContactFolder == null || accountOrContactFolder == ''){
             System.debug('accountOrContactFolder Id is null or empty');
             cases.remove(caseId);
             return;
         }
-        if(accountOrContactFolder.contains('-new')){
-            parentCreatedNow = true;
-            accountOrContactFolder = accountOrContactFolder.replace('-new', '');
-        }
 
-        casesFolder = getOrCreateFolder(accountOrContactFolder, 'Cases', parentCreatedNow);
+        casesFolder = getOrCreateFolder(accountOrContactFolder, 'Cases');
         if(casesFolder == null || casesFolder == ''){
             System.debug('casesFolder Id is null or empty');
             cases.remove(caseId);
             return;
         }
-        casesFolder = casesFolder.replace('-new', '');
 
-        // always add new case folder - no need to check if exists - third param is true
-        caseIdFolder = getOrCreateFolder(casesFolder, caseNumber + '_' + createdDate + '_' + closedDate, true);
+        caseIdFolder = getOrCreateFolder(casesFolder, caseNumber + '_' + createdDate + '_' + closedDate);
         if(caseIdFolder == null || caseIdFolder == ''){
             System.debug('caseIdFolder Id is null or empty');
             cases.remove(caseId);
             return;
         }
-        caseIdFolder = caseIdFolder.replace('-new', '');
 
         // access attachment Blob and its metadata related to case - note email is handled separately, by including with email
         for(Map<Id,Map<String,Object>> attachmentObj : (List<Map<Id,Map<String,Object>>>)attachments.get('case')){
@@ -386,83 +377,36 @@ public with sharing class CasesArchiveToBox{
         emailContentEml += body;
         return emailContentEml;
     }
-    // CAN THIS BE REFACTORED TO POST FIRST AND RETURN - REF. uploadFileToBox()???
-    private static String getOrCreateFolder(String parentId, String folderName, Boolean parentCreatedNow){
-        if(parentId == null || parentId == '' || folderName == null || folderName == '' || parentCreatedNow == null){
+
+    private static String getOrCreateFolder(String parentId, String folderName){
+        if(parentId == null || parentId == '' || folderName == null || folderName == ''){
             return '';
         }
-        if(!parentCreatedNow){
-            // Check if folder exists
-            HttpResponse res = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders/' + parentId + '/items', 'method' => 'GET', 'attributes' => null, 'body' => null, 'fileName' => null}, null);
-            if (res == null) {
-                System.debug('http response is null; failed to get parent folder: ' + parentId);
-                return '';
-            }
-            if(res.getStatusCode() == 200){
-                Map<String, Object> jsonResponse = (Map<String, Object>) JSON.deserializeUntyped(res.getBody());
-                List<Object> entries = (List<Object>) jsonResponse.get('entries');
-
-                for(Object entryObj : entries){
-                    Map<String, Object> entry = (Map<String, Object>) entryObj;
-                    String type = (String) entry.get('type');
-                    String name = (String) entry.get('name');
-                    String id = (String) entry.get('id');
-
-                    if(type == 'folder' && name == folderName){
-                        // Folder exists, return the folder ID
-                        return id;
-                    }
-                }
-            }
-            if(res.getStatusCode() == 404){
-                // folder does not exist, so create it
-                String folderBody = '{"name":"' + folderName + '", "parent": {"id":"' + parentId + '"}}';
-                HttpResponse createRes = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders', 'method' => 'POST', 'attributes' => null, 'body' => folderBody, 'fileName' => null}, null);
-                if (createRes == null) {
-                    System.debug('http response is null; failed to create folder: ' + folderName);
-                    return '';
-                }
-                if(createRes.getStatusCode() == 201){
-                    Map<String, Object> createResponse = (Map<String, Object>) JSON.deserializeUntyped(createRes.getBody());
-                    String newFolderId = (String) createResponse.get('id');
-                    // Return new folder ID and indicate new acct/contact folder was created to prevent unnecessary 'GET' for subfolder
-                    return newFolderId + '-' + 'new';
-                }
-                System.debug('Failed to create folder: ' + folderName + ' response: ' + createRes.getBody());
-                return '';
-            }
-            System.debug('Failed to get or create folder: ' + folderName + ' response: ' + res.getBody());
-            return '';
-        }else{
-            // parentCreatedNow == true; folder likely doesn't exist, so try to create it
-            String folderBody = '{"name":"' + folderName + '", "parent": {"id":"' + parentId + '"}}';
-            HttpResponse createRes = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders', 'method' => 'POST', 'attributes' => null, 'body' => folderBody, 'fileName' => null}, null);
-            if(createRes == null){
-                System.debug('http response is null; failed to create folder: ' + folderName);
-                return '';
-            }
-            if(createRes.getStatusCode() == 201){
-                Map<String, Object> createResponse = (Map<String, Object>) JSON.deserializeUntyped(createRes.getBody());
-                String newFolderId = (String) createResponse.get('id');
-                // Return new folder ID
-                return newFolderId;
-            }
-            if(createRes.getStatusCode() == 409){
-                // check if folder already exists and if so, return the folder ID
-                Map<String, Object> createResponse = (Map<String, Object>)JSON.deserializeUntyped(createRes.getBody());
-                if(createResponse.get('code') == 'item_name_in_use'){
-                    Map<String, Object> contextInfo = (Map<String, Object>)createResponse.get('context_info');
-                    List<Object> conflicts = (List<Object>)contextInfo.get('conflicts');
-                    Map<String, Object> conflict = (Map<String, Object>)conflicts[0];
-                    String folderId = (String)conflict.get('id');
-                    return folderId;
-                }
-                System.debug('Failed to create folder: ' + createRes.getBody());
-                return '';
-            }
-            System.debug('Failed to create folder: ' + createRes.getBody());
+        String folderBody = '{"name":"' + folderName + '", "parent": {"id":"' + parentId + '"}}';
+        HttpResponse createRes = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders', 'method' => 'POST', 'attributes' => null, 'body' => folderBody, 'fileName' => null}, null);
+        if(createRes == null){
+            System.debug('http response is null; failed to create folder: ' + folderName);
             return '';
         }
+        if(createRes.getStatusCode() == 201){
+            Map<String, Object> createResponse = (Map<String, Object>) JSON.deserializeUntyped(createRes.getBody());
+            String newFolderId = (String) createResponse.get('id');
+            // Return new folder ID
+            return newFolderId;
+        }
+        if(createRes.getStatusCode() == 409){
+            // check if folder already exists and if so, return the folder ID
+            Map<String, Object> createResponse = (Map<String, Object>)JSON.deserializeUntyped(createRes.getBody());
+            if(createResponse.get('code') == 'item_name_in_use'){
+                Map<String, Object> contextInfo = (Map<String, Object>)createResponse.get('context_info');
+                List<Object> conflicts = (List<Object>)contextInfo.get('conflicts');
+                Map<String, Object> conflict = (Map<String, Object>)conflicts[0];
+                String folderId = (String)conflict.get('id');
+                return folderId;
+            }
+        }
+        System.debug('Failed to get/create folder: ' + createRes.getBody());
+        return '';
     }
 
     private static HttpResponse makeBoxApiCall(Map<String, String> config, Blob fileBlob){
@@ -549,6 +493,7 @@ public with sharing class CasesArchiveToBox{
         String fileName = (String) attachment.get('fileName');
         String fileEndpoint = 'files/content?parent_id=' + caseIdFolder;
         HttpResponse fileResponse = makeBoxApiCall(new Map<String, String>{'endpoint' => fileEndpoint, 'method' => 'POST', 'body' => null, 'fileName' => fileName}, fileBlob);
+
         if(fileResponse == null){
             System.debug('http response is null; returning...');
             return false;
