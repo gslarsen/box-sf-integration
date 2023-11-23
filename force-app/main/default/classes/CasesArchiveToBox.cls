@@ -232,7 +232,7 @@ public with sharing class CasesArchiveToBox{
             return;
         }
 
-        // access attachment Blob and its metadata related to case - note email is handled separately, by including with email
+        // process attachment Blob and metadata and upload - note email attachments handled separately by including with email
         for(Map<Id,Map<String,Object>> attachmentObj : (List<Map<Id,Map<String,Object>>>)attachments.get('case')){
             Id linkedEntityId = new List<Id>(attachmentObj.keySet())[0];
             Map<String,Object> attachment = (Map<String, Object>)attachmentObj.get(linkedEntityId);
@@ -249,7 +249,7 @@ public with sharing class CasesArchiveToBox{
             }
         }
 
-        // Access EmailMessages
+        // process EmailMessages
         // store .eml data for each email message
         List<Map<String,String>> emailMessagesContentEml = new List<Map<String,String>>();
 
@@ -280,7 +280,7 @@ public with sharing class CasesArchiveToBox{
                 cases.remove(caseId);
             }
         }
-        // create case with comments file and upload - NEED TO GET ACTUAL FIELDS AS > 300 in use
+        // process case with comments file and upload - NEED TO GET ACTUAL FIELDS AS > 300 in use
         String pdfContent = 'Case Number: ' + caseNumber + '<br>' + 'Subject: ' + metadata.get('subject') + '<br>' +
         'Status: ' + metadata.get('status') + '<br>' + 'Priority: ' + metadata.get('priority') + '<br>' +
         'Description: ' + metadata.get('description') + '<br>' + 'Closed Date: ' + metadata.get('closedDate') + '<br>' +
