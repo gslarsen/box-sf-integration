@@ -4,11 +4,11 @@
 */
 
 public with sharing class CasesArchiveToBox{
-    private static final String ACCOUNTS_FOLDER = '232841054083'; // change these to applicable Box folder IDs
-    private static final String CONTACTS_FOLDER = '234058604832';
+    private static final String ACCOUNTS_FOLDER_ID = '232841054083'; // change these to applicable Box folder IDs
+    private static final String CONTACTS_FOLDER_ID = '234058604832';
 	private static final String BOX_GET_CRED = 'box'; // change these to applicable named credential
 	private static final String BOX_UPLOAD_CRED = 'boxUpload';
-    private static final Integer DAYS = 60; // how many days back to look for cases; NOTE: change SOQL in fetchCasesAndMetadata() to be < LAST_N_DAYS:DAYS
+    private static final Integer DAYS = 1; // how many days back to look for cases; NOTE: change SOQL in fetchCasesAndMetadata() to be < LAST_N_DAYS:DAYS
     private static Map<Id, List<Object>> caseToEmailsAndAttachments = new Map<Id, List<Object>>();
     private static Map<Id, Case> cases = new Map<Id, Case>();
 
@@ -32,7 +32,7 @@ public with sharing class CasesArchiveToBox{
         fetchComments(caseIds);
         sendToBox();
         List<Case> casesToDelete = new List<Case>(cases.values());
-        // deleteCases(casesToDelete); // NOTE: uncomment this line to delete cases from SF
+        deleteCases(casesToDelete); // NOTE: uncomment this line to delete cases from SF
     }
 
     // Case IDs and initial metadata
@@ -165,18 +165,18 @@ public with sharing class CasesArchiveToBox{
             String accountId = metadata.get('accountId');
             String contactId = metadata.get('contactId');
             if(accountId != null && accountId != ''){
-                prepareFoldersAndUpload(caseId, 'Accounts');
+                prepareFoldersAndUpload(caseId, ACCOUNTS_FOLDER_ID, accountId);
             }else if(contactId != null && contactId != ''){
-                prepareFoldersAndUpload(caseId, 'Contacts');
+                prepareFoldersAndUpload(caseId, CONTACTS_FOLDER_ID, contactId);
             }else{
                 return;
             }
         }
     }
 
-    // create folder structure Accounts or Contacts folder
-    private static void prepareFoldersAndUpload(String caseId, String type){
-        if(caseId == null || caseId == '' || type == null || type == ''){
+    // create folder structure: Accounts or Contacts folder, Cases, Case, prep and upload files
+    private static void prepareFoldersAndUpload(String caseId, String accountsOrContactsFolderId, String acctOrContactId){
+        if(caseId == null || caseId == '' || accountsOrContactsFolderId == null || accountsOrContactsFolderId == ''){
             return;
         }
         Map<String, String> metadata = (Map<String, String>) caseToEmailsAndAttachments.get(caseId)[0];
@@ -197,37 +197,25 @@ public with sharing class CasesArchiveToBox{
         String accountName = metadata.get('accountName');
         String contactId = metadata.get('contactId');
         String contactName = metadata.get('contactName');
-        String parent = '';
-        String id = '';
-        String casesFolder = '';
-        String caseIdFolder = '';
-        String accountOrContactFolder = '';
+        String id = acctOrContactId;
 
-        if(type == 'Accounts'){
-            parent = ACCOUNTS_FOLDER;
-            id = accountId;
-        }else if(type == 'Contacts'){
-            parent = CONTACTS_FOLDER;
-            id = contactId;
-        }
-
-        accountOrContactFolder = getOrCreateFolder(parent, id);
-        if(accountOrContactFolder == null || accountOrContactFolder == ''){
-            System.debug('accountOrContactFolder Id is null or empty');
+        String accountOrContactFolderId = getOrCreateFolder(accountsOrContactsFolderId, id);
+        if(accountOrContactFolderId == null || accountOrContactFolderId == ''){
+            System.debug('accountOrContactFolderId is null or empty');
             cases.remove(caseId);
             return;
         }
 
-        casesFolder = getOrCreateFolder(accountOrContactFolder, 'Cases');
-        if(casesFolder == null || casesFolder == ''){
-            System.debug('casesFolder Id is null or empty');
+        String casesFolderId = getOrCreateFolder(accountOrContactFolderId, 'Cases');
+        if(casesFolderId == null || casesFolderId == ''){
+            System.debug('casesFolderId is null or empty');
             cases.remove(caseId);
             return;
         }
 
-        caseIdFolder = getOrCreateFolder(casesFolder, caseNumber + '_' + createdDate + '_' + closedDate);
-        if(caseIdFolder == null || caseIdFolder == ''){
-            System.debug('caseIdFolder Id is null or empty');
+        String caseFolderId = getOrCreateFolder(casesFolderId, caseNumber + '_' + createdDate + '_' + closedDate);
+        if(caseFolderId == null || caseFolderId == ''){
+            System.debug('caseFolderId Id is null or empty');
             cases.remove(caseId);
             return;
         }
@@ -243,7 +231,7 @@ public with sharing class CasesArchiveToBox{
                 'blob' => attachmentBinary,
                 'fileName' => attachmentFilename
             };
-            if(!uploadFileToBox(blobAttachment, caseIdFolder)){
+            if(!uploadFileToBox(blobAttachment, caseFolderId)){
                 System.debug('Failed to upload case attachment file: ' + attachmentFilename + ' caseId: ' + caseId + ' will not be deleted from SF');
                 cases.remove(caseId);
             }
@@ -275,7 +263,7 @@ public with sharing class CasesArchiveToBox{
                 'fileName' => emailEmlFileName,
                 'fileType' => 'text/plain'
             };
-            if(!uploadFileToBox(emailEmlAttachment, caseIdFolder)){
+            if(!uploadFileToBox(emailEmlAttachment, caseFolderId)){
                 System.debug('Failed to upload email file: ' + emailEmlFileName + ' caseId: ' + caseId + ' will not be deleted from SF');
                 cases.remove(caseId);
             }
@@ -313,7 +301,7 @@ public with sharing class CasesArchiveToBox{
             'fileName' => pdfFileName,
             'fileType' => 'application/pdf'
         };
-        if(!uploadFileToBox(pdfAttachment, caseIdFolder)){
+        if(!uploadFileToBox(pdfAttachment, caseFolderId)){
             System.debug('Failed to upload case details file: ' + pdfFileName + ' caseId: ' + caseId + ' will not be deleted from SF');
             cases.remove(caseId);
         }
@@ -482,14 +470,14 @@ public with sharing class CasesArchiveToBox{
         return bodyBlob;
     }
 
-    private static Boolean uploadFileToBox(Map<String, Object> attachment, String caseIdFolder){
-        if(attachment == null || attachment.isEmpty() || caseIdFolder == null || caseIdFolder == ''){
+    private static Boolean uploadFileToBox(Map<String, Object> attachment, String caseFolderId){
+        if(attachment == null || attachment.isEmpty() || caseFolderId == null || caseFolderId == ''){
             return false;
         }
 
         Blob fileBlob = (Blob) attachment.get('blob');
         String fileName = (String) attachment.get('fileName');
-        String fileEndpoint = 'files/content?parent_id=' + caseIdFolder;
+        String fileEndpoint = 'files/content?parent_id=' + caseFolderId;
         HttpResponse fileResponse = makeBoxApiCall(new Map<String, String>{'endpoint' => fileEndpoint, 'method' => 'POST', 'body' => null, 'fileName' => fileName}, fileBlob);
 
         if(fileResponse == null){
