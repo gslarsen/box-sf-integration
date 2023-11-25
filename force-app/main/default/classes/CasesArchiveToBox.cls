@@ -238,7 +238,7 @@ public with sharing class CasesArchiveToBox{
     private static void sendEmailsToBox(String caseId, String caseFolderId){
         List<EmailMessage> emailMessages = (List<EmailMessage>) caseToEmailsAndAttachments.get(caseId)[1];
         Map<String, List<Map<Id,Object>>> attachments = (Map<String, List<Map<Id,Object>>>) caseToEmailsAndAttachments.get(caseId)[2];
-        // store .eml data for each email message
+        // store data for each email message
         List<Map<String,String>> emailMessagesContentEml = new List<Map<String,String>>();
 
         for(EmailMessage e : emailMessages){
@@ -310,7 +310,7 @@ public with sharing class CasesArchiveToBox{
     }
 
     private static String prepareEmail(EmailMessage e, List<Map<Id,Map<String,Object>>> attachments){
-        // .eml files headers
+        // headers
         String emailContentEml = 'From: ' + e.FromName + ' [' + e.FromAddress + ']' + '\n' +
             'Sent: ' + String.valueOf(e.MessageDate) + '\n' +
             'To: ' + e.ToAddress + '\n' +
@@ -319,7 +319,7 @@ public with sharing class CasesArchiveToBox{
             'Subject: ' + e.Subject + '\n' +
             'MIME-Version: 1.0' + '\n' +
             'Content-Type: multipart/mixed; boundary="main_boundary"\n\n';
-        // email body
+        // body
         String body = '';
         body += '--main_boundary\n';
         body += 'Content-Type: multipart/alternative; boundary="alternate_boundary"\n\n';
@@ -332,7 +332,7 @@ public with sharing class CasesArchiveToBox{
 
         body += '--alternate_boundary--\n\n';
 
-        // add any attachments
+        // attachments
         if(e.HasAttachment){
             for(Map<Id,Map<String,Object>> attachmentObj : attachments){
                 Id linkedEntityId = new List<Id>(attachmentObj.keySet())[0];
@@ -357,7 +357,7 @@ public with sharing class CasesArchiveToBox{
                 body += base64Data + '\n\n';
             }
         }
-        // End of the multipart/mixed section
+
         body += '--main_boundary--\n\n';
         emailContentEml += body;
         return emailContentEml;
@@ -373,7 +373,6 @@ public with sharing class CasesArchiveToBox{
         if(createRes.getStatusCode() == 201){
             Map<String, Object> createResponse = (Map<String, Object>) JSON.deserializeUntyped(createRes.getBody());
             String newFolderId = (String) createResponse.get('id');
-            // Return new folder ID
             return newFolderId;
         }
         if(createRes.getStatusCode() == 409){
@@ -486,7 +485,7 @@ public with sharing class CasesArchiveToBox{
                 String boxFileName = (String)conflicts.get('name');
                 return boxFileName == fileName;
             }
-            return false; // another reason
+            return false;
         }else{
             System.debug('Failed to upload file: ' + fileResponse.getBody());
             return false;
