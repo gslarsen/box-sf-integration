@@ -1,15 +1,15 @@
 /*
-	This class was written using only the Box API reference (https://developer.box.com/reference/)
+    This class was written using only the Box API reference (https://developer.box.com/reference/)
 
-    Note: if there are any failures in any API calls, the case will not be deleted from SF and
+    Note: if there are failures in any API calls, the case will not be deleted from SF and
     will be picked up in the next run and attempted again
 */
 
 public with sharing class CasesArchiveToBox{
     private static final String ACCOUNTS_FOLDER_ID = '232841054083'; // change these to applicable Box folder IDs
     private static final String CONTACTS_FOLDER_ID = '234058604832';
-	private static final String BOX_GET_CRED = 'box'; // change these to applicable named credential
-	private static final String BOX_UPLOAD_CRED = 'boxUpload';
+    private static final String BOX_GET_CRED = 'box'; // change these to applicable named credential
+    private static final String BOX_UPLOAD_CRED = 'boxUpload';
     private static final Integer DAYS = 60; // how many days back to look for cases; NOTE: change SOQL in fetchCasesAndMetadata() to be < LAST_N_DAYS:DAYS
     private static Map<Id, List<Object>> caseToEmailsAndAttachments = new Map<Id, List<Object>>();
     private static Map<Id, Case> cases = new Map<Id, Case>();
