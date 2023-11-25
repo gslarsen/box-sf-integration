@@ -1,6 +1,8 @@
 /*
 	This class was written using only the Box API reference (https://developer.box.com/reference/)
-    Note: if there are any failures in API calls, the case will not be deleted from SF
+
+    Note: if there are any failures in any API calls, the case will not be deleted from SF and
+    will be picked up in the next run and attempted again
 */
 
 public with sharing class CasesArchiveToBox{
@@ -8,13 +10,12 @@ public with sharing class CasesArchiveToBox{
     private static final String CONTACTS_FOLDER_ID = '234058604832';
 	private static final String BOX_GET_CRED = 'box'; // change these to applicable named credential
 	private static final String BOX_UPLOAD_CRED = 'boxUpload';
-    private static final Integer DAYS = 1; // how many days back to look for cases; NOTE: change SOQL in fetchCasesAndMetadata() to be < LAST_N_DAYS:DAYS
+    private static final Integer DAYS = 60; // how many days back to look for cases; NOTE: change SOQL in fetchCasesAndMetadata() to be < LAST_N_DAYS:DAYS
     private static Map<Id, List<Object>> caseToEmailsAndAttachments = new Map<Id, List<Object>>();
     private static Map<Id, Case> cases = new Map<Id, Case>();
 
     @future(callout=true)
     public static void archiveCases(){
-        // DELETE CASES FROM HERE IF NOT ABLE TO PUT IN BOX (e.g. can't create folder or post files)
         cases = fetchCasesAndMetadata();
         if(cases.isEmpty()){
             System.debug('No cases found-returning');
@@ -32,10 +33,10 @@ public with sharing class CasesArchiveToBox{
         fetchComments(caseIds);
         sendToBox();
         List<Case> casesToDelete = new List<Case>(cases.values());
-        deleteCases(casesToDelete); // NOTE: uncomment this line to delete cases from SF
+        // deleteCases(casesToDelete); // NOTE: uncomment this line to delete cases from SF
     }
 
-    // Case IDs and initial metadata
+    // Case IDs and initial metadata - NEED TO GET DESIRED FIELDS AS > 300 in use
     private static Map<Id, Case> fetchCasesAndMetadata(){
         if(Schema.sObjectType.Case.isAccessible()){
             String query = 'SELECT Id, CaseNumber, Subject, Description, ClosedDate, CreatedDate, CreatedById, LastModifiedById, Origin, AccountId, Account.Name, ContactId, Contact.Name, OwnerId, Owner.Name, Status, Priority, Reason, Type, SuppliedEmail, SuppliedCompany, SuppliedName, SuppliedPhone FROM Case WHERE ClosedDate = LAST_N_DAYS:' + DAYS;
@@ -165,24 +166,17 @@ public with sharing class CasesArchiveToBox{
             String accountId = metadata.get('accountId');
             String contactId = metadata.get('contactId');
             if(accountId != null && accountId != ''){
-                prepareFoldersAndUpload(caseId, ACCOUNTS_FOLDER_ID, accountId);
+                prepAndUpload(caseId, ACCOUNTS_FOLDER_ID, accountId);
             }else if(contactId != null && contactId != ''){
-                prepareFoldersAndUpload(caseId, CONTACTS_FOLDER_ID, contactId);
+                prepAndUpload(caseId, CONTACTS_FOLDER_ID, contactId);
             }else{
                 return;
             }
         }
     }
 
-    // create folder structure: Accounts or Contacts folder, Cases, Case, prep and upload files
-    private static void prepareFoldersAndUpload(String caseId, String accountsOrContactsFolderId, String acctOrContactId){
-        if(caseId == null || caseId == '' || accountsOrContactsFolderId == null || accountsOrContactsFolderId == ''){
-            return;
-        }
+    private static void prepAndUpload(String caseId, String accountsOrContactsFolderId, String acctOrContactId){
         Map<String, String> metadata = (Map<String, String>) caseToEmailsAndAttachments.get(caseId)[0];
-        List<EmailMessage> emailMessages = (List<EmailMessage>) caseToEmailsAndAttachments.get(caseId)[1];
-        Map<String, List<Map<Id,Object>>> attachments = (Map<String, List<Map<Id,Object>>>) caseToEmailsAndAttachments.get(caseId)[2];
-        List<CaseComment> comments = (List<CaseComment>) caseToEmailsAndAttachments.get(caseId)[3];
         String caseNumber = metadata.get('caseNumber');
         String createdDate = metadata.get('createdDate');
         String closedDate = metadata.get('closedDate');
@@ -193,10 +187,6 @@ public with sharing class CasesArchiveToBox{
         // remove leading zeros from case #
         String regexLeadingZeros = '^0+';
         caseNumber = caseNumber.replaceAll(regexLeadingZeros, '');
-        String accountId = metadata.get('accountId');
-        String accountName = metadata.get('accountName');
-        String contactId = metadata.get('contactId');
-        String contactName = metadata.get('contactName');
         String id = acctOrContactId;
 
         String accountOrContactFolderId = getOrCreateFolder(accountsOrContactsFolderId, id);
@@ -220,7 +210,14 @@ public with sharing class CasesArchiveToBox{
             return;
         }
 
-        // process attachment Blob and metadata and upload - note email attachments handled separately by including with email
+        sendAttachmentsToBox(caseId, caseFolderId);
+        sendEmailsToBox(caseId, caseFolderId);
+        sendDetailsToBox(caseId, caseFolderId);
+    }
+
+    private static void sendAttachmentsToBox(String caseId, String caseFolderId){
+        Map<String, List<Map<Id,Object>>> attachments = (Map<String, List<Map<Id,Object>>>) caseToEmailsAndAttachments.get(caseId)[2];
+
         for(Map<Id,Map<String,Object>> attachmentObj : (List<Map<Id,Map<String,Object>>>)attachments.get('case')){
             Id linkedEntityId = new List<Id>(attachmentObj.keySet())[0];
             Map<String,Object> attachment = (Map<String, Object>)attachmentObj.get(linkedEntityId);
@@ -236,8 +233,11 @@ public with sharing class CasesArchiveToBox{
                 cases.remove(caseId);
             }
         }
+    }
 
-        // process EmailMessages
+    private static void sendEmailsToBox(String caseId, String caseFolderId){
+        List<EmailMessage> emailMessages = (List<EmailMessage>) caseToEmailsAndAttachments.get(caseId)[1];
+        Map<String, List<Map<Id,Object>>> attachments = (Map<String, List<Map<Id,Object>>>) caseToEmailsAndAttachments.get(caseId)[2];
         // store .eml data for each email message
         List<Map<String,String>> emailMessagesContentEml = new List<Map<String,String>>();
 
@@ -250,7 +250,6 @@ public with sharing class CasesArchiveToBox{
             }
             emailMessagesContentEml.add(new Map<String,String>{emailSent => emailContent});
         }
-
         // create .eml files and upload
         for(Integer i=0; i < emailMessagesContentEml.size(); ++i){
             String emailSent = new List<String>(emailMessagesContentEml[i].keySet())[0];
@@ -268,23 +267,26 @@ public with sharing class CasesArchiveToBox{
                 cases.remove(caseId);
             }
         }
-        // process case with comments file and upload - NEED TO GET ACTUAL FIELDS AS > 300 in use
-        String pdfContent = 'Case Number: ' + caseNumber + '<br>' + 'Subject: ' + metadata.get('subject') + '<br>' +
+    }
+
+    private static void sendDetailsToBox(String caseId, String caseFolderId){
+        Map<String, String> metadata = (Map<String, String>) caseToEmailsAndAttachments.get(caseId)[0];
+        List<CaseComment> comments = (List<CaseComment>) caseToEmailsAndAttachments.get(caseId)[3];
+
+        String pdfContent = 'Case Number: ' + metadata.get('caseNumber') + '<br>' + 'Subject: ' + metadata.get('subject') + '<br>' +
         'Status: ' + metadata.get('status') + '<br>' + 'Priority: ' + metadata.get('priority') + '<br>' +
         'Description: ' + metadata.get('description') + '<br>' + 'Closed Date: ' + metadata.get('closedDate') + '<br>' +
         'Created Date: ' + metadata.get('createdDate') + '<br>' + 'Origin: ' + metadata.get('origin') + '<br>' +
         'Created By Id: ' + metadata.get('createdById') + '<br>' +
         'Last Modified By Id: ' + metadata.get('lastModifiedById') + '<br>' +
-        'Account Id: ' + accountId + '<br>' + 'Account Name: ' + accountName + '<br>' +
-        'Contact Id: ' + contactId + '<br>' + 'Contact Name: ' + contactName + '<br>' +
+        'Account Id: ' + metadata.get('accountId') + '<br>' + 'Account Name: ' + metadata.get('accountName') + '<br>' +
+        'Contact Id: ' + metadata.get('contactId') + '<br>' + 'Contact Name: ' + metadata.get('contactName') + '<br>' +
         'Owner Id: ' + metadata.get('ownerId') + '<br>' + 'Owner Name: ' + metadata.get('ownerName') + '<br>' +
         'Reason: ' + metadata.get('reason') + '<br>' + 'Type: ' + metadata.get('caseType') + '<br>' +
         'Supplied Email: ' + metadata.get('suppliedEmail') + '<br>' + 'Supplied Company: ' + metadata.get('suppliedCompany') + '<br>' +
-        'Supplied Name: ' + metadata.get('suppliedName') + '<br>' + 'Supplied Phone: ' + metadata.get('suppliedPhone') + '<br>' +
-        'Number of Emails: ' + emailMessages.size();
+        'Supplied Name: ' + metadata.get('suppliedName') + '<br>' + 'Supplied Phone: ' + metadata.get('suppliedPhone');
 
         String commentsContent = '';
-
         for(CaseComment c : comments){
             commentsContent += 'Comment Id: ' + c.Id + '<br>' +
             'Created Date: ' + c.CreatedDate + '<br>' +
@@ -307,10 +309,7 @@ public with sharing class CasesArchiveToBox{
         }
     }
 
-    public static String prepareEmail(EmailMessage e, List<Map<Id,Map<String,Object>>> attachments){
-        if(e == null || attachments == null){
-            return '';
-        }
+    private static String prepareEmail(EmailMessage e, List<Map<Id,Map<String,Object>>> attachments){
         // .eml files headers
         String emailContentEml = 'From: ' + e.FromName + ' [' + e.FromAddress + ']' + '\n' +
             'Sent: ' + String.valueOf(e.MessageDate) + '\n' +
@@ -365,9 +364,6 @@ public with sharing class CasesArchiveToBox{
     }
 
     private static String getOrCreateFolder(String parentId, String folderName){
-        if(parentId == null || parentId == '' || folderName == null || folderName == ''){
-            return '';
-        }
         String folderBody = '{"name":"' + folderName + '", "parent": {"id":"' + parentId + '"}}';
         HttpResponse createRes = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders', 'method' => 'POST', 'attributes' => null, 'body' => folderBody, 'fileName' => null}, null);
         if(createRes == null){
@@ -396,9 +392,6 @@ public with sharing class CasesArchiveToBox{
     }
 
     private static HttpResponse makeBoxApiCall(Map<String, String> config, Blob fileBlob){
-        if(config == null || config.isEmpty()){
-            return null;
-        }
         Http http = new Http();
         HttpRequest req = new HttpRequest();
         req.setMethod(config.get('method'));
@@ -471,10 +464,6 @@ public with sharing class CasesArchiveToBox{
     }
 
     private static Boolean uploadFileToBox(Map<String, Object> attachment, String caseFolderId){
-        if(attachment == null || attachment.isEmpty() || caseFolderId == null || caseFolderId == ''){
-            return false;
-        }
-
         Blob fileBlob = (Blob) attachment.get('blob');
         String fileName = (String) attachment.get('fileName');
         String fileEndpoint = 'files/content?parent_id=' + caseFolderId;
@@ -505,6 +494,9 @@ public with sharing class CasesArchiveToBox{
     }
 
     private static void deleteCases(List<Case> cases){
+        if(cases.isEmpty()){
+            return;
+        }
         if(Schema.sObjectType.Case.isDeletable()){
             try{
                 delete cases;
