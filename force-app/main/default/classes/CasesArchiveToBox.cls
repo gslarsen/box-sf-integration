@@ -1,8 +1,12 @@
 /*
-    This class was written using only the Box API reference (https://developer.box.com/reference/)
+    This class takes cases that have been closed for n days and archives them to Box,
+    including emails, attachments, comments and select details.
 
-    Note: if there are failures in any API calls, the case will not be deleted from SF and
-    will be picked up in the next run and attempted again
+    Upon successful archiving, the cases are deleted from Salesforce. If there are failures
+    in any Box API calls, the case will not be deleted from SF and will be picked up in the
+    next run and attempted again.
+
+    Only Box (https://developer.box.com/reference/) and Salesforce APIs are used.
 */
 
 public with sharing class CasesArchiveToBox{
