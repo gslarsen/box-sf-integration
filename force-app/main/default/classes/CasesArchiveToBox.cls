@@ -3,7 +3,7 @@
     including emails, attachments, comments and select details.
 
     Upon successful archiving, the cases are deleted from Salesforce. If there are failures
-    in any Box API calls, the case will not be deleted from SF and will be picked up in the
+    in any Box API calls, the case will not be deleted and will be picked up in the
     next run and attempted again.
 
     Only Box (https://developer.box.com/reference/) and Salesforce APIs are used.
