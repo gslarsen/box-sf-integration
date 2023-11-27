@@ -444,7 +444,7 @@ public with sharing class CasesArchiveToBox{
             return null;
         }
     }
-
+    
 	// this method enables posting multipart/form-data to Box
 	// ref: https://github.com/box/box-salesforce-sdk/blob/master/src/classes/BoxBase64.cls Origin with background: https://enreeco.blogspot.com/2013/01/salesforce-apex-post-mutipartform-data.html
 	public static Blob prepareMultipartFormBinary(Blob fileBody, String fileName){
