@@ -2,8 +2,8 @@
     This class takes cases that have been closed for n days and archives them to Box,
     including emails, attachments, comments and select details.
 
-    Upon successful archiving, the cases are deleted from Salesforce. If there are failures
-    in any Box API calls, the case will not be deleted and will be picked up in the
+    Upon successful archiving, the cases are deleted from Salesforce. If there are any
+    failures in archiving, the case will not be deleted; it will be picked up in the
     next run and attempted again.
 
     Only Box (https://developer.box.com/reference/) and Salesforce APIs are used.
@@ -45,10 +45,10 @@ public with sharing class CasesArchiveToBox{
         if(Schema.sObjectType.Case.isAccessible()){
             String query = 'SELECT Id, CaseNumber, Subject, Description, ClosedDate, CreatedDate, CreatedById, LastModifiedById, Origin, AccountId, Account.Name, ContactId, Contact.Name, OwnerId, Owner.Name, Status, Priority, Reason, Type, SuppliedEmail, SuppliedCompany, SuppliedName, SuppliedPhone FROM Case WHERE ClosedDate = LAST_N_DAYS:' + DAYS;
             Map<Id, Case> caseMap = new Map<Id, Case>((List<Case>) Database.query(query));
-            System.debug('caseMap:' + caseMap);
             if(caseMap.isEmpty()){
                 System.debug('No cases found-returning');
             }
+
             for(Case c : caseMap.values()){
                 caseToEmailsAndAttachments.put(c.Id, new List<Object>{
                     new Map<String, String>{
@@ -371,23 +371,39 @@ public with sharing class CasesArchiveToBox{
         String folderBody = '{"name":"' + folderName + '", "parent": {"id":"' + parentId + '"}}';
         HttpResponse createRes = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders', 'method' => 'POST', 'attributes' => null, 'body' => folderBody, 'fileName' => null}, null);
         if(createRes == null){
-            System.debug('http response is null; failed to create folder: ' + folderName);
+            System.debug('http response is null; failed to create folder: ' + folderName + ' in parent folder: ' + parentId);
             return '';
         }
         if(createRes.getStatusCode() == 201){
-            Map<String, Object> createResponse = (Map<String, Object>) JSON.deserializeUntyped(createRes.getBody());
-            String newFolderId = (String) createResponse.get('id');
-            return newFolderId;
+            try{
+                Map<String, Object> createResponse = (Map<String, Object>) JSON.deserializeUntyped(createRes.getBody());
+                String newFolderId = (String) createResponse.get('id');
+                return newFolderId;
+            }catch(JSONException e){
+                System.debug('Failed to parse JSON response: ' + e.getMessage());
+                return '';
+            }catch(Exception e){
+                System.debug('An error has occurred: ' + e.getMessage());
+                return '';
+            }
         }
         if(createRes.getStatusCode() == 409){
-            // check if folder already exists and if so, return the folder ID
-            Map<String, Object> createResponse = (Map<String, Object>)JSON.deserializeUntyped(createRes.getBody());
-            if(createResponse.get('code') == 'item_name_in_use'){
-                Map<String, Object> contextInfo = (Map<String, Object>)createResponse.get('context_info');
-                List<Object> conflicts = (List<Object>)contextInfo.get('conflicts');
-                Map<String, Object> conflict = (Map<String, Object>)conflicts[0];
-                String folderId = (String)conflict.get('id');
-                return folderId;
+            try{
+                // check if folder already exists and if so, return the folder ID
+                Map<String, Object> createResponse = (Map<String, Object>)JSON.deserializeUntyped(createRes.getBody());
+                if(createResponse.get('code') == 'item_name_in_use'){
+                    Map<String, Object> contextInfo = (Map<String, Object>)createResponse.get('context_info');
+                    List<Object> conflicts = (List<Object>)contextInfo.get('conflicts');
+                    Map<String, Object> conflict = (Map<String, Object>)conflicts[0];
+                    String folderId = (String)conflict.get('id');
+                    return folderId;
+                }
+            }catch(JSONException e){
+                System.debug('Failed to parse JSON response: ' + e.getMessage());
+                return '';
+            }catch(Exception e){
+                System.debug('An error has occurred: ' + e.getMessage());
+                return '';
             }
         }
         System.debug('Failed to get/create folder: ' + createRes.getBody());
@@ -398,6 +414,7 @@ public with sharing class CasesArchiveToBox{
         Http http = new Http();
         HttpRequest req = new HttpRequest();
         req.setMethod(config.get('method'));
+        req.setTimeout(120000);
 
         if(fileBlob != null){
             req.setEndpoint('callout:' + BOX_UPLOAD_CRED + '/' + config.get('endpoint'));
@@ -419,11 +436,16 @@ public with sharing class CasesArchiveToBox{
             req.setHeader('Content-Type','multipart/form-data; boundary=' + boundary);
             req.setBodyAsBlob(base64File);
         }
-        HttpResponse res = http.send(req);
-        return res;
+        try{
+            HttpResponse res = http.send(req);
+            return res;
+        }catch(CalloutException e){
+            System.debug('A callout error has occurred: ' + e.getMessage());
+            return null;
+        }
     }
 
-	// this method is to enable posting multipart/form-data to Box
+	// this method enables posting multipart/form-data to Box
 	// ref: https://github.com/box/box-salesforce-sdk/blob/master/src/classes/BoxBase64.cls Origin with background: https://enreeco.blogspot.com/2013/01/salesforce-apex-post-mutipartform-data.html
 	public static Blob prepareMultipartFormBinary(Blob fileBody, String fileName){
         if(fileBody == null || fileName == null || fileName == ''){
@@ -473,7 +495,7 @@ public with sharing class CasesArchiveToBox{
         HttpResponse fileResponse = makeBoxApiCall(new Map<String, String>{'endpoint' => fileEndpoint, 'method' => 'POST', 'body' => null, 'fileName' => fileName}, fileBlob);
 
         if(fileResponse == null){
-            System.debug('http response is null; returning...');
+            System.debug('http response is null; file: ' + fileName + ' not uploaded and case in caseFolderId: ' + caseFolderId + ' will not be deleted from SF');
             return false;
         }
         if(fileResponse.getStatusCode() == 201){
@@ -481,33 +503,46 @@ public with sharing class CasesArchiveToBox{
             return true;
         }
         if(fileResponse.getStatusCode() == 409){
-            // check if file already exists and if so, return the file ID
-            Map<String, Object> createResponse = (Map<String, Object>)JSON.deserializeUntyped(fileResponse.getBody());
-            if(createResponse.get('code') == 'item_name_in_use'){
-                Map<String, Object> contextInfo = (Map<String, Object>)createResponse.get('context_info');
-                Map<String, Object> conflicts = (Map<String, Object>)contextInfo.get('conflicts');
-                String boxFileName = (String)conflicts.get('name');
-                return boxFileName == fileName;
+            try{
+                // check if file already exists and if so, return true
+                Map<String, Object> createResponse = (Map<String, Object>)JSON.deserializeUntyped(fileResponse.getBody());
+                if(createResponse.get('code') == 'item_name_in_use'){
+                    Map<String, Object> contextInfo = (Map<String, Object>)createResponse.get('context_info');
+                    Map<String, Object> conflicts = (Map<String, Object>)contextInfo.get('conflicts');
+                    String boxFileName = (String)conflicts.get('name');
+                    return boxFileName == fileName;
+                }
+                return false;
+            }catch(JSONException e){
+                System.debug('Failed to parse JSON response: ' + e.getMessage());
+                return false;
+            }catch(Exception e){
+                System.debug('An error has occurred: ' + e.getMessage());
+                return false;
             }
-            return false;
-        }else{
-            System.debug('Failed to upload file: ' + fileResponse.getBody());
-            return false;
         }
+        System.debug('Failed to upload file: ' + fileName + '; response: ' + fileResponse.getBody() + '; case in caseFolderId: ' + caseFolderId + ' will not be deleted from SF');
+        return false;
     }
 
     private static void deleteCases(List<Case> cases){
         if(cases.isEmpty()){
+            System.debug('No cases to delete');
             return;
         }
         if(Schema.sObjectType.Case.isDeletable()){
             try{
                 delete cases;
             }catch(DmlException e){
+                System.debug('A DML error deleting cases has occurred: ' + e.getMessage());
+                for(Integer i = 0; i < e.getNumDml(); i++) {
+                    System.debug('Error occurred on record with ID: ' + e.getDmlId(i) + '; message: ' + e.getDmlMessage(i));
+                }
+            }catch(Exception e){
                 System.debug('An error deleting cases has occurred: ' + e.getMessage());
             }
         }else{
-            System.debug('Case is not deletable');
+            System.debug('Case object is not deletable');
         }
     }
 }
