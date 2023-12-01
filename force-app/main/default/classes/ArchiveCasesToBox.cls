@@ -9,7 +9,7 @@
     Only Box (https://developer.box.com/reference/) and Salesforce APIs are used.
 */
 
-public with sharing class ArchiveCasesToBox{
+public with sharing class ArchiveCasesToBox implements Database.Batchable<sObject>,Database.AllowsCallouts{
     private static final String ACCOUNTS_FOLDER_ID = '232841054083'; // change these to applicable Box folder IDs
     private static final String CONTACTS_FOLDER_ID = '234058604832';
     private static final String BOX_GET_CRED = 'box'; // change these to applicable named credential
@@ -19,9 +19,22 @@ public with sharing class ArchiveCasesToBox{
     private static Map<Id, Case> cases = new Map<Id, Case>();
     private static Boolean calloutLimitReached = false;
 
-    @future(callout=true)
-    public static void archiveCases(){
-        cases = fetchCasesAndMetadata();
+    public Database.QueryLocator start(Database.BatchableContext bc) {
+        String query = 'SELECT Id, CaseNumber, Subject, Description, ClosedDate, CreatedDate, CreatedById, LastModifiedById, Origin, AccountId, Account.Name, ContactId, Contact.Name, OwnerId, Owner.Name, Status, Priority, Reason, Type, SuppliedEmail, SuppliedCompany, SuppliedName, SuppliedPhone FROM Case WHERE ClosedDate = LAST_N_DAYS:' + DAYS;
+        return Database.getQueryLocator(query);
+    }
+
+    public void execute(Database.BatchableContext bc, List<Case> scope) {
+        System.debug('Batch job started');
+        archiveCases(scope);
+    }
+
+    public void finish(Database.BatchableContext bc) {
+        System.debug('Batch job finished');
+    }
+
+    public static void archiveCases(List<Case> scope){
+        cases = fetchCasesAndMetadata(scope);
         if(cases.isEmpty()){
             System.debug('No cases found-returning');
             return;
@@ -42,51 +55,45 @@ public with sharing class ArchiveCasesToBox{
     }
 
     // Case IDs and initial metadata - NEED TO GET DESIRED FIELDS AS > 300 in use
-    private static Map<Id, Case> fetchCasesAndMetadata(){
-        if(Schema.sObjectType.Case.isAccessible()){
-            String query = 'SELECT Id, CaseNumber, Subject, Description, ClosedDate, CreatedDate, CreatedById, LastModifiedById, Origin, AccountId, Account.Name, ContactId, Contact.Name, OwnerId, Owner.Name, Status, Priority, Reason, Type, SuppliedEmail, SuppliedCompany, SuppliedName, SuppliedPhone FROM Case WHERE ClosedDate = LAST_N_DAYS:' + DAYS;
-            Map<Id, Case> caseMap = new Map<Id, Case>((List<Case>) Database.query(query));
-            if(caseMap.isEmpty()){
-                System.debug('No cases found-returning');
-            }
-
-            for(Case c : caseMap.values()){
-                caseToEmailsAndAttachments.put(c.Id, new List<Object>{
-                    new Map<String, String>{
-                        'caseNumber' => c.CaseNumber,
-                        'subject' => c.Subject,
-                        'description' => c.Description,
-                        'closedDate' => String.valueOf(c.ClosedDate),
-                        'createdDate' => String.valueOf(c.CreatedDate),
-                        'origin' => c.Origin,
-                        'accountId' => c.AccountId,
-                        'accountName' => c.Account.Name,
-                        'contactId' => c.ContactId,
-                        'contactName' => c.Contact.Name,
-                        'ownerId' => c.OwnerId,
-                        'ownerName' => c.Owner.Name,
-                        'lastModifiedById' => c.LastModifiedById,
-                        'createdById' => c.CreatedById,
-                        'status' => c.Status,
-                        'priority' => c.Priority,
-                        'reason' => c.Reason,
-                        'type' => c.Type,
-                        'suppliedEmail' => c.SuppliedEmail,
-                        'suppliedCompany' => c.SuppliedCompany,
-                        'suppliedName' => c.SuppliedName,
-                        'suppliedPhone' => c.SuppliedPhone
-                    },
-                    new List<EmailMessage>(),
-                    // attachments related to cases and emails
-                    new Map<String, List<Map<Id,Map<String,Object>>>>{'email' => new List<Map<Id,Map<String,Object>>>(), 'case' => new List<Map<Id,Map<String,Object>>>()},
-                    new List<CaseComment>()
-                });
-            }
-            return caseMap;
-        }else{
-            System.debug('Case is not accessible');
-            return null;
+    private static Map<Id, Case> fetchCasesAndMetadata(List<Case> scope){
+        Map<Id, Case> caseMap = new Map<Id, Case>((List<Case>) scope);
+        if(caseMap.isEmpty()){
+            System.debug('No cases found-returning');
         }
+
+        for(Case c : caseMap.values()){
+            caseToEmailsAndAttachments.put(c.Id, new List<Object>{
+                new Map<String, String>{
+                    'caseNumber' => c.CaseNumber,
+                    'subject' => c.Subject,
+                    'description' => c.Description,
+                    'closedDate' => String.valueOf(c.ClosedDate),
+                    'createdDate' => String.valueOf(c.CreatedDate),
+                    'origin' => c.Origin,
+                    'accountId' => c.AccountId,
+                    'accountName' => c.Account.Name,
+                    'contactId' => c.ContactId,
+                    'contactName' => c.Contact.Name,
+                    'ownerId' => c.OwnerId,
+                    'ownerName' => c.Owner.Name,
+                    'lastModifiedById' => c.LastModifiedById,
+                    'createdById' => c.CreatedById,
+                    'status' => c.Status,
+                    'priority' => c.Priority,
+                    'reason' => c.Reason,
+                    'type' => c.Type,
+                    'suppliedEmail' => c.SuppliedEmail,
+                    'suppliedCompany' => c.SuppliedCompany,
+                    'suppliedName' => c.SuppliedName,
+                    'suppliedPhone' => c.SuppliedPhone
+                },
+                new List<EmailMessage>(),
+                // attachments related to cases and emails
+                new Map<String, List<Map<Id,Map<String,Object>>>>{'email' => new List<Map<Id,Map<String,Object>>>(), 'case' => new List<Map<Id,Map<String,Object>>>()},
+                new List<CaseComment>()
+            });
+        }
+        return caseMap;
     }
 
     private static List<String> fetchEmails(List<Id> caseIds, Map<Id, Id> emailIdToCaseId){
