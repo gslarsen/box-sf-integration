@@ -17,6 +17,7 @@ public with sharing class CasesArchiveToBox{
     private static final Integer DAYS = 60; // how many days back to look for cases; NOTE: change SOQL in fetchCasesAndMetadata() to be < LAST_N_DAYS:DAYS
     private static Map<Id, List<Object>> caseToEmailsAndAttachments = new Map<Id, List<Object>>();
     private static Map<Id, Case> cases = new Map<Id, Case>();
+    private static Boolean calloutLimitReached = false;
 
     @future(callout=true)
     public static void archiveCases(){
@@ -91,7 +92,7 @@ public with sharing class CasesArchiveToBox{
     private static List<String> fetchEmails(List<Id> caseIds, Map<Id, Id> emailIdToCaseId){
         List<String> emailIdsWithAttachments = new List<String>();
         if(Schema.sObjectType.EmailMessage.isAccessible()){
-            for(EmailMessage e : [SELECT Id, ParentId, ActivityId, CreatedById, CreatedDate, LastModifiedDate, LastModifiedById, SystemModstamp, TextBody, HtmlBody, Headers, Subject, Name, FromName, FromAddress, ValidatedFromAddress, ToAddress, CcAddress, BccAddress, Incoming, HasAttachment, Status, MessageDate, IsDeleted, ReplyToEmailMessageId, IsExternallyVisible, MessageIdentifier, ThreadIdentifier, ClientThreadIdentifier, IsClientManaged, RelatedToId, IsTracked, IsOpened, FirstOpenedDate, LastOpenedDate, IsBounced, EmailTemplateId FROM EmailMessage WHERE ParentId IN :caseIds]){
+            for(EmailMessage e : [SELECT Id, ParentId, TextBody, Subject, Name, FromName, FromAddress, ToAddress, CcAddress, BccAddress, HasAttachment, MessageDate, IsDeleted FROM EmailMessage WHERE ParentId IN :caseIds]){
                 if(caseToEmailsAndAttachments.containsKey(e.ParentId)){
                     ((List<EmailMessage>)caseToEmailsAndAttachments.get(e.ParentId)[1]).add(e);
                     emailIdToCaseId.put(e.Id, e.ParentId);
@@ -138,8 +139,7 @@ public with sharing class CasesArchiveToBox{
                 linkedEntityId => new Map<String, Object>{
                 'blob' => cv.VersionData,
                 'fileName' => cv.Title,
-                'fileExtension' => cv.FileExtension,
-                'emailSource' => emailIdsWithAttachments.contains(linkedEntityId)
+                'fileExtension' => cv.FileExtension
             }};
             docIdToAttachment.put(cv.ContentDocumentId, linkedEntityIdToAttachment);
         }
@@ -166,6 +166,11 @@ public with sharing class CasesArchiveToBox{
 
     private static void sendToBox(){
         for(Id caseId : caseToEmailsAndAttachments.keySet()){
+            if(calloutLimitReached){
+                System.debug('Callout limit reached; caseId: ' + caseId + ' will not be deleted from SF and any remaining cases will not be processed in this run, rather they will be processed in the next run');
+                cases.remove(caseId);
+                break;
+            }
             Map<String, String> metadata = (Map<String, String>) caseToEmailsAndAttachments.get(caseId)[0];
             String accountId = metadata.get('accountId');
             String contactId = metadata.get('contactId');
@@ -174,7 +179,8 @@ public with sharing class CasesArchiveToBox{
             }else if(contactId != null && contactId != ''){
                 prepAndUpload(caseId, CONTACTS_FOLDER_ID, contactId);
             }else{
-                return;
+                System.debug('Both accountId and contactId are null or empty - caseId: ' + caseId + ' will not be deleted from SF');
+                cases.remove(caseId);
             }
         }
     }
@@ -195,21 +201,21 @@ public with sharing class CasesArchiveToBox{
 
         String accountOrContactFolderId = getOrCreateFolder(accountsOrContactsFolderId, id);
         if(accountOrContactFolderId == null || accountOrContactFolderId == ''){
-            System.debug('accountOrContactFolderId is null or empty');
+            System.debug('accountOrContactFolderId is null or empty - caseId: ' + caseId + ' will not be deleted from SF');
             cases.remove(caseId);
             return;
         }
 
         String casesFolderId = getOrCreateFolder(accountOrContactFolderId, 'Cases');
         if(casesFolderId == null || casesFolderId == ''){
-            System.debug('casesFolderId is null or empty');
+            System.debug('casesFolderId is null or empty - caseId: ' + caseId + ' will not be deleted from SF');
             cases.remove(caseId);
             return;
         }
 
         String caseFolderId = getOrCreateFolder(casesFolderId, caseNumber + '_' + createdDate + '_' + closedDate);
         if(caseFolderId == null || caseFolderId == ''){
-            System.debug('caseFolderId Id is null or empty');
+            System.debug('caseFolderId Id is null or empty - caseId: ' + caseId + ' will not be deleted from SF');
             cases.remove(caseId);
             return;
         }
@@ -371,7 +377,7 @@ public with sharing class CasesArchiveToBox{
         String folderBody = '{"name":"' + folderName + '", "parent": {"id":"' + parentId + '"}}';
         HttpResponse createRes = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders', 'method' => 'POST', 'attributes' => null, 'body' => folderBody, 'fileName' => null}, null);
         if(createRes == null){
-            System.debug('http response is null; failed to create folder: ' + folderName + ' in parent folder: ' + parentId);
+            System.debug('http response is null; failed to get/create folder: ' + folderName + ' in parent folder: ' + parentId);
             return '';
         }
         if(createRes.getStatusCode() == 201){
@@ -411,6 +417,12 @@ public with sharing class CasesArchiveToBox{
     }
 
     private static HttpResponse makeBoxApiCall(Map<String, String> config, Blob fileBlob){
+        Integer callouts = Limits.getCallouts();
+        if(callouts == Limits.getLimitCallouts()){
+            calloutLimitReached = true;
+            System.debug('Callout limit reached: ' + callouts + '; no further callouts will be made');
+            return null;
+        }
         Http http = new Http();
         HttpRequest req = new HttpRequest();
         req.setMethod(config.get('method'));
