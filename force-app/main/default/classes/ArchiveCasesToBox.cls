@@ -9,7 +9,7 @@
     Only Box (https://developer.box.com/reference/) and Salesforce APIs are used.
 */
 
-public with sharing class CasesArchiveToBox{
+public with sharing class ArchiveCasesToBox{
     private static final String ACCOUNTS_FOLDER_ID = '232841054083'; // change these to applicable Box folder IDs
     private static final String CONTACTS_FOLDER_ID = '234058604832';
     private static final String BOX_GET_CRED = 'box'; // change these to applicable named credential
