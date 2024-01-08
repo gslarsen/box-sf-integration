@@ -14,10 +14,10 @@ public with sharing class ArchiveCasesToBox implements Database.Batchable<sObjec
     private static final String CONTACTS_FOLDER_ID = '234058604832';
     private static final String BOX_GET_CRED = 'box'; // change these to applicable named credential
     private static final String BOX_UPLOAD_CRED = 'boxUpload';
-    private static final Integer DAYS = 60; // how many days back to look for cases; NOTE: change SOQL in fetchCasesAndMetadata() to be < LAST_N_DAYS:DAYS
-    private static Map<Id, List<Object>> caseToEmailsAndAttachments = new Map<Id, List<Object>>();
-    private static Map<Id, Case> cases = new Map<Id, Case>();
-    private static Boolean calloutLimitReached = false;
+    @TestVisible private static final Integer DAYS = 60; // how many days back to look for cases; NOTE: change SOQL in fetchCasesAndMetadata() to be < LAST_N_DAYS:DAYS
+    @TestVisible private static Map<Id, List<Object>> caseToEmailsAndAttachments = new Map<Id, List<Object>>();
+    @TestVisible private static Map<Id, Case> cases = new Map<Id, Case>();
+    @TestVisible private static Boolean calloutLimitReached = false;
 
     public Database.QueryLocator start(Database.BatchableContext bc) {
         String query = 'SELECT Id, CaseNumber, Subject, Description, ClosedDate, CreatedDate, CreatedById, LastModifiedById, Origin, AccountId, Account.Name, ContactId, Contact.Name, OwnerId, Owner.Name, Status, Priority, Reason, Type, SuppliedEmail, SuppliedCompany, SuppliedName, SuppliedPhone FROM Case WHERE ClosedDate = LAST_N_DAYS:' + DAYS;
@@ -55,7 +55,7 @@ public with sharing class ArchiveCasesToBox implements Database.Batchable<sObjec
     }
 
     // Case IDs and initial metadata - NEED TO GET DESIRED FIELDS AS > 300 in use
-    private static Map<Id, Case> fetchCasesAndMetadata(List<Case> scope){
+    @TestVisible private static Map<Id, Case> fetchCasesAndMetadata(List<Case> scope){
         Map<Id, Case> caseMap = new Map<Id, Case>((List<Case>) scope);
         if(caseMap.isEmpty()){
             System.debug('No cases found-returning');
@@ -96,7 +96,7 @@ public with sharing class ArchiveCasesToBox implements Database.Batchable<sObjec
         return caseMap;
     }
 
-    private static List<String> fetchEmails(List<Id> caseIds, Map<Id, Id> emailIdToCaseId){
+    @TestVisible private static List<String> fetchEmails(List<Id> caseIds, Map<Id, Id> emailIdToCaseId){
         List<String> emailIdsWithAttachments = new List<String>();
         if(Schema.sObjectType.EmailMessage.isAccessible()){
             for(EmailMessage e : [SELECT Id, ParentId, TextBody, Subject, Name, FromName, FromAddress, ToAddress, CcAddress, BccAddress, HasAttachment, MessageDate, IsDeleted FROM EmailMessage WHERE ParentId IN :caseIds]){
@@ -114,7 +114,7 @@ public with sharing class ArchiveCasesToBox implements Database.Batchable<sObjec
         return emailIdsWithAttachments;
     }
 
-    private static void fetchComments(List<Id> caseIds){
+    @TestVisible private static void fetchComments(List<Id> caseIds){
         if(Schema.sObjectType.CaseComment.isAccessible()){
             for(CaseComment c : [SELECT Id, ParentId, CommentBody, CreatedDate, CreatedById, CreatedBy.Name FROM CaseComment WHERE ParentId IN :caseIds]){
                 if(caseToEmailsAndAttachments.containsKey(c.ParentId)){
@@ -126,7 +126,7 @@ public with sharing class ArchiveCasesToBox implements Database.Batchable<sObjec
         }
     }
 
-    private static void fetchAttachments(List<Id> combinedIds, Map<Id, Id> emailIdToCaseId, List<Id> emailIdsWithAttachments){
+    @TestVisible private static void fetchAttachments(List<Id> combinedIds, Map<Id, Id> emailIdToCaseId, List<Id> emailIdsWithAttachments){
         if(!Schema.sObjectType.ContentDocumentLink.isAccessible() || !Schema.sObjectType.ContentVersion.isAccessible()){
             System.debug('ContentDocumentLink or ContentVersion is not accessible');
             return;
@@ -171,7 +171,7 @@ public with sharing class ArchiveCasesToBox implements Database.Batchable<sObjec
         }
     }
 
-    private static void sendToBox(){
+    @TestVisible private static void sendToBox(){
         for(Id caseId : caseToEmailsAndAttachments.keySet()){
             if(calloutLimitReached){
                 System.debug('Callout limit reached; caseId: ' + caseId + ' will not be deleted from SF and any remaining cases will not be processed in this run, rather they will be processed in the next run');
@@ -192,11 +192,17 @@ public with sharing class ArchiveCasesToBox implements Database.Batchable<sObjec
         }
     }
 
-    private static void prepAndUpload(String caseId, String accountsOrContactsFolderId, String acctOrContactId){
+    @TestVisible private static void prepAndUpload(String caseId, String accountsOrContactsFolderId, String acctOrContactId){
         Map<String, String> metadata = (Map<String, String>) caseToEmailsAndAttachments.get(caseId)[0];
         String caseNumber = metadata.get('caseNumber');
         String createdDate = metadata.get('createdDate');
         String closedDate = metadata.get('closedDate');
+
+        if(caseNumber == null || caseNumber == '' || createdDate == null || createdDate == '' || closedDate == null || closedDate == ''){
+            System.debug('caseNumber, createdDate or closedDate is null or empty - caseId: ' + caseId + ' will not be deleted from SF');
+            cases.remove(caseId);
+            return;
+        }
         // remove time from dates
         String regexTime = '\\s\\d{2}:\\d{2}:\\d{2}';
         createdDate = createdDate.replaceAll(regexTime, '');
@@ -232,7 +238,7 @@ public with sharing class ArchiveCasesToBox implements Database.Batchable<sObjec
         sendDetailsToBox(caseId, caseFolderId);
     }
 
-    private static void sendAttachmentsToBox(String caseId, String caseFolderId){
+    @TestVisible private static void sendAttachmentsToBox(String caseId, String caseFolderId){
         Map<String, List<Map<Id,Object>>> attachments = (Map<String, List<Map<Id,Object>>>) caseToEmailsAndAttachments.get(caseId)[2];
 
         for(Map<Id,Map<String,Object>> attachmentObj : (List<Map<Id,Map<String,Object>>>)attachments.get('case')){
@@ -252,7 +258,7 @@ public with sharing class ArchiveCasesToBox implements Database.Batchable<sObjec
         }
     }
 
-    private static void sendEmailsToBox(String caseId, String caseFolderId){
+    @TestVisible private static void sendEmailsToBox(String caseId, String caseFolderId){
         List<EmailMessage> emailMessages = (List<EmailMessage>) caseToEmailsAndAttachments.get(caseId)[1];
         Map<String, List<Map<Id,Object>>> attachments = (Map<String, List<Map<Id,Object>>>) caseToEmailsAndAttachments.get(caseId)[2];
         // store data for each email message
@@ -286,7 +292,7 @@ public with sharing class ArchiveCasesToBox implements Database.Batchable<sObjec
         }
     }
 
-    private static void sendDetailsToBox(String caseId, String caseFolderId){
+    @TestVisible private static void sendDetailsToBox(String caseId, String caseFolderId){
         Map<String, String> metadata = (Map<String, String>) caseToEmailsAndAttachments.get(caseId)[0];
         List<CaseComment> comments = (List<CaseComment>) caseToEmailsAndAttachments.get(caseId)[3];
 
@@ -326,7 +332,7 @@ public with sharing class ArchiveCasesToBox implements Database.Batchable<sObjec
         }
     }
 
-    private static String prepareEmail(EmailMessage e, List<Map<Id,Map<String,Object>>> attachments){
+    @TestVisible private static String prepareEmail(EmailMessage e, List<Map<Id,Map<String,Object>>> attachments){
         // headers
         String emailContentEml = 'From: ' + e.FromName + ' [' + e.FromAddress + ']' + '\n' +
             'Sent: ' + String.valueOf(e.MessageDate) + '\n' +
@@ -380,7 +386,7 @@ public with sharing class ArchiveCasesToBox implements Database.Batchable<sObjec
         return emailContentEml;
     }
 
-    private static String getOrCreateFolder(String parentId, String folderName){
+    @TestVisible private static String getOrCreateFolder(String parentId, String folderName){
         String folderBody = '{"name":"' + folderName + '", "parent": {"id":"' + parentId + '"}}';
         HttpResponse createRes = makeBoxApiCall(new Map<String, String>{'endpoint' => 'folders', 'method' => 'POST', 'attributes' => null, 'body' => folderBody, 'fileName' => null}, null);
         if(createRes == null){
@@ -433,7 +439,7 @@ public with sharing class ArchiveCasesToBox implements Database.Batchable<sObjec
         Http http = new Http();
         HttpRequest req = new HttpRequest();
         req.setMethod(config.get('method'));
-        req.setTimeout(120000);
+        req.setTimeout(12000); // default is 10 seconds; max is 120 seconds (120000 ms for arg)
 
         if(fileBlob != null){
             req.setEndpoint('callout:' + BOX_UPLOAD_CRED + '/' + config.get('endpoint'));
@@ -507,7 +513,7 @@ public with sharing class ArchiveCasesToBox implements Database.Batchable<sObjec
         return bodyBlob;
     }
 
-    private static Boolean uploadFileToBox(Map<String, Object> attachment, String caseFolderId){
+    @TestVisible private static Boolean uploadFileToBox(Map<String, Object> attachment, String caseFolderId){
         Blob fileBlob = (Blob) attachment.get('blob');
         String fileName = (String) attachment.get('fileName');
         String fileEndpoint = 'files/content?parent_id=' + caseFolderId;
@@ -544,7 +550,7 @@ public with sharing class ArchiveCasesToBox implements Database.Batchable<sObjec
         return false;
     }
 
-    private static void deleteCases(List<Case> cases){
+    @TestVisible private static void deleteCases(List<Case> cases){
         if(cases.isEmpty()){
             System.debug('No cases to delete');
             return;

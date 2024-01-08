@@ -190,6 +190,12 @@ public with sharing class CasesArchiveToBox{
         String caseNumber = metadata.get('caseNumber');
         String createdDate = metadata.get('createdDate');
         String closedDate = metadata.get('closedDate');
+
+        if(caseNumber == null || caseNumber == '' || createdDate == null || createdDate == '' || closedDate == null || closedDate == ''){
+            System.debug('caseNumber, createdDate or closedDate is null or empty - caseId: ' + caseId + ' will not be deleted from SF');
+            cases.remove(caseId);
+            return;
+        }
         // remove time from dates
         String regexTime = '\\s\\d{2}:\\d{2}:\\d{2}';
         createdDate = createdDate.replaceAll(regexTime, '');
