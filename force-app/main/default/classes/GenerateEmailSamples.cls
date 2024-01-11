@@ -1,6 +1,7 @@
 public with sharing class GenerateEmailSamples {
     private static final Integer DAYS = 60; // how many days back to look for cases; NOTE: change SOQL in fetchCasesAndMetadata() to be < LAST_N_DAYS:DAYS
     private static final String EMAIL_SAMPLES_TO = 'notime2bbrief@gmail.com'; // change this to the email address you want to send the email samples to
+    private static final Integer MAX_EMAILS_TO_SAMPLE = 1; // change this to the max number of emails samples to send via email (one email per sample email)
     private static Map<Id, List<Object>> caseToEmailsAndAttachments = new Map<Id, List<Object>>();
     private static Map<Id, Case> cases = new Map<Id, Case>();
     private static Boolean calloutLimitReached = false;
@@ -27,7 +28,7 @@ public with sharing class GenerateEmailSamples {
     // Case IDs and initial metadata - NEED TO GET DESIRED FIELDS AS > 300 in use
     private static Map<Id, Case> fetchCasesAndMetadata(){
         if(Schema.sObjectType.Case.isAccessible()){
-            String query = 'SELECT Id, CaseNumber, Subject, Description, ClosedDate, CreatedDate, CreatedById, LastModifiedById, Origin, AccountId, Account.Name, ContactId, Contact.Name, OwnerId, Owner.Name, Status, Priority, Reason, Type, SuppliedEmail, SuppliedCompany, SuppliedName, SuppliedPhone FROM Case WHERE ClosedDate = LAST_N_DAYS:' + DAYS;
+            String query = 'SELECT Id, CaseNumber, Subject, Description, ClosedDate, CreatedDate, CreatedById, LastModifiedById, Origin, AccountId, Account.Name, ContactId, Contact.Name, OwnerId, Owner.Name, Status FROM Case WHERE ClosedDate = LAST_N_DAYS:' + DAYS;
             Map<Id, Case> caseMap = new Map<Id, Case>((List<Case>) Database.query(query));
             if(caseMap.isEmpty()){
                 System.debug('No cases found-returning');
@@ -50,14 +51,7 @@ public with sharing class GenerateEmailSamples {
                         'ownerName' => c.Owner.Name,
                         'lastModifiedById' => c.LastModifiedById,
                         'createdById' => c.CreatedById,
-                        'status' => c.Status,
-                        'priority' => c.Priority,
-                        'reason' => c.Reason,
-                        'type' => c.Type,
-                        'suppliedEmail' => c.SuppliedEmail,
-                        'suppliedCompany' => c.SuppliedCompany,
-                        'suppliedName' => c.SuppliedName,
-                        'suppliedPhone' => c.SuppliedPhone
+                        'status' => c.Status
                     },
                     new List<EmailMessage>(),
                     // attachments related to cases and emails
@@ -141,54 +135,40 @@ public with sharing class GenerateEmailSamples {
                 cases.remove(caseId);
                 break;
             }
-            sendEmailSamples(caseId);
-        }
-    }
+            List<EmailMessage> emailMessages = (List<EmailMessage>) caseToEmailsAndAttachments.get(caseId)[1];
+            Map<String, List<Map<Id,Object>>> attachments = (Map<String, List<Map<Id,Object>>>) caseToEmailsAndAttachments.get(caseId)[2];
+            List<Map<String,String>> emailMessagesContentEml = new List<Map<String,String>>();
+            Integer countEmails = 0;
 
-    private static void sendEmailSamples(String caseId){
-        List<EmailMessage> emailMessages = (List<EmailMessage>) caseToEmailsAndAttachments.get(caseId)[1];
-        Map<String, List<Map<Id,Object>>> attachments = (Map<String, List<Map<Id,Object>>>) caseToEmailsAndAttachments.get(caseId)[2];
-        // store data for each email message
-        List<Map<String,String>> emailMessagesContentEml = new List<Map<String,String>>();
-        // //REMOVE THIS
-        // Integer countEmails = 0;
-
-        for(EmailMessage e : emailMessages){
-            // //REMOVE THIS
-            // countEmails++;
-            // if(countEmails > 1){
-            //     break;
-            // }
-            // //TO HERE
-            String emailSent = String.valueOf(e.MessageDate);
-            String emailContent = prepareEmail(e, (List<Map<Id,Map<String,Object>>>)attachments.get('email'));
-            if(emailContent == null || emailContent == ''){
-                System.debug('emailContent is null or empty');
-                continue;
+            for(EmailMessage e : emailMessages){
+                countEmails++;
+                if(countEmails > MAX_EMAILS_TO_SAMPLE){
+                    break;
+                }
+                String emailDate = String.valueOf(e.MessageDate);
+                String emailContent = prepareEmail(e, (List<Map<Id,Map<String,Object>>>)attachments.get('email'));
+                if(emailContent == null || emailContent == ''){
+                    System.debug('emailContent is null or empty');
+                    continue;
+                }
+                emailMessagesContentEml.add(new Map<String,String>{emailDate => emailContent});
             }
-            emailMessagesContentEml.add(new Map<String,String>{emailSent => emailContent});
-        }
-        // create .eml files and upload
-        for(Integer i=0; i < emailMessagesContentEml.size(); ++i){
-            String emailSent = new List<String>(emailMessagesContentEml[i].keySet())[0];
-            String email = emailMessagesContentEml[i].get(emailSent) ;
-            Blob emailEmlBlob = Blob.valueOf(email);
-            String emailEmlFileName = emailSent + '.eml';
+            // create .eml files and send
+            for(Integer i=0; i < emailMessagesContentEml.size(); ++i){
+                String emailDate = new List<String>(emailMessagesContentEml[i].keySet())[0];
+                String email = emailMessagesContentEml[i].get(emailDate) ;
+                Blob emailEmlBlob = Blob.valueOf(email);
+                String emailEmlFileName = emailDate + '.eml';
 
-            // Map<String, Object> emailEmlAttachment = new Map<String, Object>{
-            //     'blob' => emailEmlBlob,
-            //     'fileName' => emailEmlFileName,
-            //     'fileType' => 'text/plain'
-            // };
-
-            if(!sendEmailWithEmlAttachment(emailEmlBlob, emailEmlFileName, EMAIL_SAMPLES_TO)){
-                System.debug('Failed to send email file: ' + emailEmlFileName + ' caseId: ' + caseId + ' will not be deleted from SF');
-                cases.remove(caseId);
+                if(!sendEmail(emailEmlBlob, emailEmlFileName, EMAIL_SAMPLES_TO)){
+                    System.debug('Failed to send email file: ' + emailEmlFileName + ' caseId: ' + caseId + ' will not be deleted from SF');
+                    cases.remove(caseId);
+                }
             }
         }
     }
 
-    private static Boolean sendEmailWithEmlAttachment(Blob emailEmlBlob, String emailEmlFileName, String recipientEmail) {
+    private static Boolean sendEmail(Blob emailEmlBlob, String emailEmlFileName, String recipientEmail) {
         System.debug('Attempting to send email with attachment: ' + emailEmlFileName + ' to: ' + recipientEmail);
         Integer emailInvocations = Limits.getEmailInvocations();
         Integer limitEmailInvocations = Limits.getLimitEmailInvocations();
@@ -228,7 +208,7 @@ public with sharing class GenerateEmailSamples {
     private static String prepareEmail(EmailMessage e, List<Map<Id,Map<String,Object>>> attachments){
         // headers
         String emailContentEml = 'From: ' + e.FromName + ' [' + e.FromAddress + ']' + '\n' +
-            'Sent: ' + String.valueOf(e.MessageDate) + '\n' +
+            'Date: ' + (e.MessageDate).format('EEE, dd MMM yyyy HH:mm:ss Z') + '\n' +
             'To: ' + e.ToAddress + '\n' +
             'Cc: ' + (e.CcAddress == null ? '' : e.CcAddress) + '\n' +
             'Bcc: ' + (e.BccAddress == null ? '' : e.BccAddress) + '\n' +
